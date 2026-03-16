@@ -26,7 +26,7 @@ describe("runDryRunSummary", () => {
     const header = log.mock.calls.find(([entry]) =>
       String(entry).includes("would call gpt-5.2-pro"),
     );
-    expect(header?.[0]).toContain("[dry-run]");
+    expect(header?.[0]).toContain("[preview]");
     expect(log.mock.calls.some(([entry]) => String(entry).includes("File Token Usage"))).toBe(true);
   });
 
@@ -94,6 +94,7 @@ describe("runDryRunSummary", () => {
         version: "3.0.0",
         log,
         browserConfig: {
+          manualLogin: false,
           cookieSync: true,
           cookieNames: null,
           inlineCookies: [

@@ -170,6 +170,12 @@ export async function createRemoteServer(
     };
 
     const attachments: BrowserAttachment[] = [];
+    let fallbackSubmission:
+      | {
+          prompt: string;
+          attachments: BrowserAttachment[];
+        }
+      | undefined;
     try {
       const attachmentsPayload = Array.isArray(payload.attachments) ? payload.attachments : [];
       for (const [index, attachment] of attachmentsPayload.entries()) {
@@ -181,6 +187,25 @@ export async function createRemoteServer(
           displayPath: attachment.displayPath,
           sizeBytes: attachment.sizeBytes,
         });
+      }
+      if (payload.fallbackSubmission) {
+        const fallbackAttachments: BrowserAttachment[] = [];
+        for (const [index, attachment] of payload.fallbackSubmission.attachments.entries()) {
+          const safeName = sanitizeName(
+            attachment.fileName ?? `fallback-attachment-${index + 1}`,
+          );
+          const filePath = path.join(attachmentDir, `fallback-${safeName}`);
+          await writeFile(filePath, Buffer.from(attachment.contentBase64, "base64"));
+          fallbackAttachments.push({
+            path: filePath,
+            displayPath: attachment.displayPath,
+            sizeBytes: attachment.sizeBytes,
+          });
+        }
+        fallbackSubmission = {
+          prompt: payload.fallbackSubmission.prompt,
+          attachments: fallbackAttachments,
+        };
       }
 
       // Reuse the existing browser logger surface so clients see the same log stream.
@@ -204,6 +229,7 @@ export async function createRemoteServer(
       if (options.manualLoginDefault) {
         payload.browserConfig.manualLogin = true;
         payload.browserConfig.manualLoginProfileDir = options.manualLoginProfileDir;
+        payload.browserConfig.cookieSync = false;
         payload.browserConfig.keepBrowser = true;
         if (verbose) {
           logger(
@@ -215,6 +241,8 @@ export async function createRemoteServer(
       const result = await runBrowser({
         prompt: payload.prompt,
         attachments,
+        prepareOnly: payload.options.prepareOnly,
+        fallbackSubmission,
         config: payload.browserConfig,
         log: automationLogger,
         heartbeatIntervalMs: payload.options.heartbeatIntervalMs,
@@ -268,7 +296,7 @@ export async function createRemoteServer(
 export async function serveRemote(options: RemoteServerOptions = {}): Promise<void> {
   const manualProfileDir =
     options.manualLoginProfileDir ?? path.join(os.homedir(), ".oracle", "browser-profile");
-  const preferManualLogin = options.manualLoginDefault || process.platform === "win32" || isWsl();
+  const preferManualLogin = options.manualLoginDefault ?? true;
   let cookies: CookieParam[] | null = null;
   let opened = false;
 

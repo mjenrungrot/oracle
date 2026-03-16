@@ -6,10 +6,13 @@ describe("resolveBrowserConfig", () => {
   test("returns defaults when config missing", () => {
     const resolved = resolveBrowserConfig(undefined);
     expect(resolved.url).toBe(CHATGPT_URL);
-    const isWindows = process.platform === "win32";
-    expect(resolved.cookieSync).toBe(!isWindows);
+    expect(resolved.cookieSync).toBe(false);
     expect(resolved.headless).toBe(false);
-    expect(resolved.manualLogin).toBe(isWindows);
+    expect(resolved.inputTimeoutMs).toBe(120_000);
+    expect(resolved.autoReattachDelayMs).toBe(5_000);
+    expect(resolved.autoReattachIntervalMs).toBe(3_000);
+    expect(resolved.autoReattachTimeoutMs).toBe(60_000);
+    expect(resolved.manualLogin).toBe(true);
     expect(resolved.profileLockTimeoutMs).toBe(300_000);
   });
 
@@ -19,6 +22,7 @@ describe("resolveBrowserConfig", () => {
       timeoutMs: 123,
       inputTimeoutMs: 456,
       cookieSync: false,
+      manualLogin: false,
       headless: true,
       desiredModel: "Custom",
       chromeProfile: "Profile 1",
@@ -29,6 +33,8 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.timeoutMs).toBe(123);
     expect(resolved.inputTimeoutMs).toBe(456);
     expect(resolved.cookieSync).toBe(false);
+    expect(resolved.manualLogin).toBe(false);
+    expect(resolved.manualLoginProfileDir).toBeNull();
     expect(resolved.headless).toBe(true);
     expect(resolved.desiredModel).toBe("Custom");
     expect(resolved.chromeProfile).toBe("Profile 1");

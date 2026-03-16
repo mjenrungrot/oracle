@@ -73,29 +73,59 @@ async function runCliPty(
 }
 
 ptyDescribe("oracle CLI browser guard (PTY)", () => {
-  it("fails fast when grok is paired with --engine browser", async () => {
+  it("fails fast when a non-ChatGPT model is requested", async () => {
     const { output, code } = await runCliPty([
-      "--engine",
-      "browser",
       "--model",
       "grok",
       "--prompt",
       "TTY guard prompt for grok browser path",
     ]);
     expect(code).not.toBe(0);
-    expect(stripAnsi(output)).toMatch(/Browser engine only supports GPT and Gemini models/i);
+    expect(stripAnsi(output)).toMatch(/Only ChatGPT\/GPT browser models are supported/i);
   }, 30_000);
 
-  it("fails fast when multi-model list includes non-GPT under browser engine", async () => {
+  it("fails fast when multi-model fan-out is requested", async () => {
     const { output, code } = await runCliPty([
-      "--engine",
-      "browser",
       "--models",
-      "gpt-5.1,grok",
+      "gpt-5.1,gpt-5.4",
       "--prompt",
       "TTY guard prompt for mixed models",
     ]);
     expect(code).not.toBe(0);
-    expect(stripAnsi(output)).toMatch(/Browser engine only supports GPT and Gemini models/i);
+    expect(stripAnsi(output)).toMatch(/--models is deprecated/i);
+  }, 30_000);
+
+  it("fails fast when api mode is requested", async () => {
+    const { output, code } = await runCliPty([
+      "--engine",
+      "api",
+      "--prompt",
+      "TTY guard prompt for api mode",
+    ]);
+    expect(code).not.toBe(0);
+    expect(stripAnsi(output)).toMatch(/--engine api is deprecated/i);
+  }, 30_000);
+
+  it("fails fast when legacy dry-run preview modes are requested", async () => {
+    const { output, code } = await runCliPty([
+      "--dry-run",
+      "json",
+      "--prompt",
+      "TTY guard prompt for legacy dry-run preview",
+    ]);
+    expect(code).not.toBe(0);
+    expect(stripAnsi(output)).toMatch(/--dry-run json is no longer supported/i);
+    expect(stripAnsi(output)).toMatch(/use --preview json/i);
+  }, 30_000);
+
+  it("fails fast when dry-run is combined with headless mode", async () => {
+    const { output, code } = await runCliPty([
+      "--dry-run",
+      "--browser-headless",
+      "--prompt",
+      "TTY guard prompt for dry-run visibility",
+    ]);
+    expect(code).not.toBe(0);
+    expect(stripAnsi(output)).toMatch(/--dry-run requires a visible browser/i);
   }, 30_000);
 });

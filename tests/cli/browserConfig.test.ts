@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildBrowserConfig, resolveBrowserModelLabel } from "../../src/cli/browserConfig.js";
+import { getOracleHomeDir } from "../../src/oracleHome.js";
 
 describe("buildBrowserConfig", () => {
   test("uses defaults when optional flags omitted", async () => {
@@ -10,15 +11,20 @@ describe("buildBrowserConfig", () => {
       chromeCookiePath: null,
       url: undefined,
       timeoutMs: undefined,
-      inputTimeoutMs: undefined,
-      cookieSync: undefined,
+      inputTimeoutMs: 120_000,
+      autoReattachDelayMs: 5_000,
+      autoReattachIntervalMs: 3_000,
+      autoReattachTimeoutMs: 60_000,
+      cookieSync: false,
       headless: undefined,
       keepBrowser: undefined,
+      manualLogin: true,
       hideWindow: undefined,
       desiredModel: "GPT-5.4 Pro",
       debug: undefined,
       allowCookieErrors: true,
     });
+    expect(config.manualLoginProfileDir).toBe(`${getOracleHomeDir()}/browser-profile`);
   });
 
   test("maps gpt-5.4 browser runs to Thinking 5.4", async () => {
@@ -65,10 +71,21 @@ describe("buildBrowserConfig", () => {
       headless: undefined,
       hideWindow: true,
       keepBrowser: true,
+      manualLogin: true,
       desiredModel: "GPT-5.2",
       debug: true,
       allowCookieErrors: true,
     });
+  });
+
+  test("allows explicit manual-login opt-out", async () => {
+    const config = await buildBrowserConfig({
+      model: "gpt-5.2",
+      browserManualLogin: false,
+    });
+    expect(config.manualLogin).toBe(false);
+    expect(config.manualLoginProfileDir).toBeUndefined();
+    expect(config.cookieSync).toBe(true);
   });
 
   test("prefers explicit browser model label when provided", async () => {
@@ -76,7 +93,7 @@ describe("buildBrowserConfig", () => {
       model: "gpt-5.2-pro",
       browserModelLabel: "Instant",
     });
-    expect(config.desiredModel).toBe("GPT-5.4 Pro");
+    expect(config.desiredModel).toBe("Instant");
   });
 
   test("falls back to canonical label when override matches base model", async () => {
@@ -87,26 +104,12 @@ describe("buildBrowserConfig", () => {
     expect(config.desiredModel).toBe("GPT-5.2");
   });
 
-  test("maps thinking Gemini model to thinking label", async () => {
-    const config = await buildBrowserConfig({
-      model: "gemini-3-pro",
-    });
-    expect(config.desiredModel).toBe("Gemini 3 Pro");
-  });
-
-  test("maps deep-think Gemini model to deep-think label", async () => {
-    const config = await buildBrowserConfig({
-      model: "gemini-3-pro-deep-think",
-    });
-    expect(config.desiredModel).toBe("gemini-3-deep-think");
-  });
-
   test("trims whitespace around override labels", async () => {
     const config = await buildBrowserConfig({
       model: "gpt-5.1",
       browserModelLabel: "  ChatGPT 5.1 Instant  ",
     });
-    expect(config.desiredModel).toBe("GPT-5.2");
+    expect(config.desiredModel).toBe("ChatGPT 5.1 Instant");
   });
 
   test("parses remoteChrome host targets", async () => {

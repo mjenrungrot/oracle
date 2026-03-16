@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import { startMcpServer } from "../src/mcp/server.js";
+import { mcpDeprecationMessage } from "../src/cli/deprecation.js";
 
-startMcpServer().catch((error) => {
-  console.error("oracle-mcp exited with an error:", error);
-  process.exitCode = 1;
-});
+console.error(mcpDeprecationMessage());
+process.exitCode = 1;

@@ -30,7 +30,7 @@ export interface ProviderDomFlowResult extends ProviderDomResponse {
   thoughts: string | null;
 }
 
-export async function runProviderSubmissionFlow(
+export async function runProviderPreparationFlow(
   adapter: ProviderDomAdapter,
   ctx: ProviderDomFlowContext,
 ): Promise<void> {
@@ -39,6 +39,13 @@ export async function runProviderSubmissionFlow(
     await adapter.selectMode(ctx);
   }
   await adapter.typePrompt(ctx);
+}
+
+export async function runProviderSubmissionFlow(
+  adapter: ProviderDomAdapter,
+  ctx: ProviderDomFlowContext,
+): Promise<void> {
+  await runProviderPreparationFlow(adapter, ctx);
   await adapter.submitPrompt(ctx);
 }
 

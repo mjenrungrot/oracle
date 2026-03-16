@@ -6,26 +6,18 @@ export type KnownModelName =
   | "gpt-5.1-pro"
   | "gpt-5-pro"
   | "gpt-5.1"
-  | "gpt-5.1-codex"
   | "gpt-5.2"
   | "gpt-5.2-instant"
   | "gpt-5.2-pro"
-  | "gemini-3.1-pro"
-  | "gemini-3-pro"
-  | "claude-4.5-sonnet"
-  | "claude-4.1-opus"
-  | "grok-4.1";
+  | "gpt-5.2-thinking";
 
-// ModelName now allows arbitrary strings so OpenRouter / custom IDs can pass through.
 export type ModelName = KnownModelName | (string & {});
 
 export type ProModelName =
   | "gpt-5.4-pro"
   | "gpt-5.1-pro"
   | "gpt-5-pro"
-  | "gpt-5.2-pro"
-  | "claude-4.5-sonnet"
-  | "claude-4.1-opus";
+  | "gpt-5.2-pro";
 
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 

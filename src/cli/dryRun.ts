@@ -41,13 +41,13 @@ export async function runDryRunSummary(
   deps: DryRunDeps = {},
 ): Promise<void> {
   if (engine === "browser") {
-    await runBrowserDryRun({ runOptions, cwd, version, log, browserConfig }, deps);
+    await runBrowserPreviewSummary({ runOptions, cwd, version, log, browserConfig }, deps);
     return;
   }
-  await runApiDryRun({ runOptions, cwd, version, log }, deps);
+  await runApiPreviewSummary({ runOptions, cwd, version, log }, deps);
 }
 
-async function runApiDryRun(
+async function runApiPreviewSummary(
   {
     runOptions,
     cwd,
@@ -76,10 +76,10 @@ async function runApiDryRun(
     ],
     TOKENIZER_OPTIONS,
   );
-  const headerLine = `[dry-run] Oracle (${version}) would call ${runOptions.model} with ~${estimatedInputTokens.toLocaleString()} tokens and ${files.length} files.`;
+  const headerLine = `[preview] Oracle (${version}) would call ${runOptions.model} with ~${estimatedInputTokens.toLocaleString()} tokens and ${files.length} files.`;
   log(chalk.cyan(headerLine));
   if (files.length === 0) {
-    log(chalk.dim("[dry-run] No files matched the provided --file patterns."));
+    log(chalk.dim("[preview] No files matched the provided --file patterns."));
     return;
   }
   const inputBudget = runOptions.maxInput ?? modelConfig.inputLimit;
@@ -92,7 +92,7 @@ async function runApiDryRun(
   printFileTokenStats(stats, { inputTokenBudget: inputBudget, log });
 }
 
-async function runBrowserDryRun(
+async function runBrowserPreviewSummary(
   {
     runOptions,
     cwd,
@@ -111,10 +111,10 @@ async function runBrowserDryRun(
   const assemblePromptImpl = deps.assembleBrowserPromptImpl ?? assembleBrowserPrompt;
   const artifacts = await assemblePromptImpl(runOptions, { cwd });
   const suffix = buildTokenEstimateSuffix(artifacts);
-  const headerLine = `[dry-run] Oracle (${version}) would launch browser mode (${runOptions.model}) with ~${artifacts.estimatedInputTokens.toLocaleString()} tokens${suffix}.`;
+  const headerLine = `[preview] Oracle (${version}) would launch browser mode (${runOptions.model}) with ~${artifacts.estimatedInputTokens.toLocaleString()} tokens${suffix}.`;
   log(chalk.cyan(headerLine));
-  logBrowserCookieStrategy(browserConfig, log, "dry-run");
-  logBrowserFileSummary(artifacts, log, "dry-run");
+  logBrowserCookieStrategy(browserConfig, log, "preview");
+  logBrowserFileSummary(artifacts, log, "preview");
 }
 
 function logBrowserCookieStrategy(

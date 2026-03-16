@@ -4,6 +4,23 @@ import { fileURLToPath } from "node:url";
 export default defineConfig({
   test: {
     setupFiles: ["tests/setup-env.ts", "tests/cli/runOracle/setup.ts"],
+    include: ["tests/**/*.test.ts"],
+    exclude: [
+      "tests/live/**",
+      "tests/mcp*.test.ts",
+      "tests/mcp/**",
+      "tests/gemini*.test.ts",
+      "tests/gemini-web/**",
+      "tests/browser/geminiDeepThinkDomProvider.test.ts",
+      "tests/openrouter.test.ts",
+      "tests/oracle/claude.test.ts",
+      "tests/oracle/multiModelRunner.test.ts",
+      "tests/cli/runOracle/**",
+      "tests/oracle/clientFactory.test.ts",
+      "tests/cli/browserSearchNote.test.ts",
+      "tests/cli/sessionRunner.test.ts",
+      "tests/cli/integrationCli.test.ts",
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],

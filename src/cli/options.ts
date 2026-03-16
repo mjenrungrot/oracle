@@ -4,6 +4,7 @@ import path from "node:path";
 import fg from "fast-glob";
 import type { ModelName, PreviewMode } from "../oracle.js";
 import { DEFAULT_MODEL, MODEL_CONFIGS } from "../oracle.js";
+import { nonChatGptModelMessage } from "./deprecation.js";
 
 export function collectPaths(
   value: string | string[] | undefined,
@@ -140,6 +141,30 @@ export function resolvePreviewMode(value: boolean | string | undefined): Preview
   return undefined;
 }
 
+const LEGACY_DRY_RUN_MODES = new Set<PreviewMode>(["summary", "json", "full"]);
+
+export function detectLegacyDryRunMode(rawArgs: string[]): PreviewMode | undefined {
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (!arg) continue;
+    if (arg.startsWith("--dry-run=")) {
+      const mode = arg.slice("--dry-run=".length).trim();
+      if (LEGACY_DRY_RUN_MODES.has(mode as PreviewMode)) {
+        return mode as PreviewMode;
+      }
+      continue;
+    }
+    if (arg !== "--dry-run") {
+      continue;
+    }
+    const next = rawArgs[index + 1]?.trim();
+    if (next && LEGACY_DRY_RUN_MODES.has(next as PreviewMode)) {
+      return next as PreviewMode;
+    }
+  }
+  return undefined;
+}
+
 export function parseSearchOption(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (["on", "true", "1", "yes"].includes(normalized)) {
@@ -186,43 +211,39 @@ export function parseDurationOption(value: string | undefined, label: string): n
   return parsed;
 }
 
-function isGeminiDeepThinkAlias(normalized: string): boolean {
-  return (
-    (normalized.includes("gemini") && normalized.includes("deep")) ||
-    normalized.includes("deep-think") ||
-    normalized.includes("deep_think") ||
-    normalized.includes("deepthink")
-  );
+function rejectsNonChatGptModel(normalized: string): void {
+  if (!normalized) {
+    return;
+  }
+  if (
+    normalized.includes("/") ||
+    normalized.includes("codex") ||
+    normalized.includes("gemini") ||
+    normalized.includes("claude") ||
+    normalized.includes("grok") ||
+    normalized === "sonnet" ||
+    normalized === "opus" ||
+    normalized === "claude"
+  ) {
+    throw new InvalidArgumentError(nonChatGptModelMessage(normalized));
+  }
+}
+
+export function isSupportedChatGptModel(model: string): model is ModelName {
+  return model in MODEL_CONFIGS;
 }
 
 export function resolveApiModel(modelValue: string): ModelName {
   const normalized = normalizeModelOption(modelValue).toLowerCase();
+  rejectsNonChatGptModel(normalized);
   if (normalized in MODEL_CONFIGS) {
     return normalized as ModelName;
-  }
-  if (normalized.includes("/")) {
-    return normalized as ModelName;
-  }
-  if (normalized.includes("grok")) {
-    return "grok-4.1";
-  }
-  if (normalized.includes("claude") && normalized.includes("sonnet")) {
-    return "claude-4.5-sonnet";
-  }
-  if (normalized.includes("claude") && normalized.includes("opus")) {
-    return "claude-4.1-opus";
   }
   if (normalized.includes("5.4") && normalized.includes("pro")) {
     return "gpt-5.4-pro";
   }
   if (normalized.includes("5.4")) {
     return "gpt-5.4";
-  }
-  if (normalized === "claude" || normalized === "sonnet" || /(^|\b)sonnet(\b|$)/.test(normalized)) {
-    return "claude-4.5-sonnet";
-  }
-  if (normalized === "opus" || normalized === "claude-4.1") {
-    return "claude-4.1-opus";
   }
   if (normalized.includes("5.0") || normalized === "gpt-5-pro" || normalized === "gpt-5") {
     return "gpt-5-pro";
@@ -236,30 +257,37 @@ export function resolveApiModel(modelValue: string): ModelName {
   if (normalized.includes("5.1") && normalized.includes("pro")) {
     return "gpt-5.1-pro";
   }
-  if (normalized.includes("codex")) {
-    if (normalized.includes("max")) {
-      throw new InvalidArgumentError(
-        "gpt-5.1-codex-max is not available yet. OpenAI has not released the API.",
-      );
-    }
-    return "gpt-5.1-codex";
+  if ((normalized.includes("5.2") || normalized.includes("5_2")) && normalized.includes("pro")) {
+    return "gpt-5.2-pro";
   }
-  if (isGeminiDeepThinkAlias(normalized)) {
-    throw new InvalidArgumentError(
-      "Gemini Deep Think is browser-only today. Use --engine browser --model gemini-3-deep-think.",
-    );
+  if (
+    (normalized.includes("5.2") || normalized.includes("5_2")) &&
+    normalized.includes("thinking")
+  ) {
+    return "gpt-5.2-thinking";
   }
-  if (normalized.includes("gemini")) {
-    if (normalized.includes("3.1") || normalized.includes("3_1")) {
-      return "gemini-3.1-pro";
-    }
-    return "gemini-3-pro";
+  if (
+    (normalized.includes("5.2") || normalized.includes("5_2")) &&
+    (normalized.includes("instant") || normalized.includes("fast"))
+  ) {
+    return "gpt-5.2-instant";
+  }
+  if (normalized.includes("5.2") || normalized.includes("5_2")) {
+    return "gpt-5.2";
   }
   if (normalized.includes("pro")) {
     return DEFAULT_MODEL;
   }
-  // Passthrough for custom/OpenRouter model IDs.
-  return normalized as ModelName;
+  if (normalized.includes("thinking")) {
+    return "gpt-5.2-thinking";
+  }
+  if (normalized.includes("instant") || normalized.includes("fast")) {
+    return "gpt-5.2-instant";
+  }
+  if (normalized.includes("5.1") || normalized.includes("5_1")) {
+    return "gpt-5.1";
+  }
+  return "gpt-5.2";
 }
 
 export function inferModelFromLabel(modelValue: string): ModelName {
@@ -267,32 +295,9 @@ export function inferModelFromLabel(modelValue: string): ModelName {
   if (!normalized) {
     return DEFAULT_MODEL;
   }
+  rejectsNonChatGptModel(normalized);
   if (normalized in MODEL_CONFIGS) {
     return normalized as ModelName;
-  }
-  if (normalized.includes("/")) {
-    return normalized as ModelName;
-  }
-  if (normalized.includes("grok")) {
-    return "grok-4.1";
-  }
-  if (normalized.includes("claude") && normalized.includes("sonnet")) {
-    return "claude-4.5-sonnet";
-  }
-  if (normalized.includes("claude") && normalized.includes("opus")) {
-    return "claude-4.1-opus";
-  }
-  if (normalized.includes("codex")) {
-    return "gpt-5.1-codex";
-  }
-  if (isGeminiDeepThinkAlias(normalized)) {
-    return "gemini-3-pro-deep-think" as ModelName;
-  }
-  if (normalized.includes("gemini")) {
-    if (normalized.includes("3.1") || normalized.includes("3_1")) {
-      return "gemini-3.1-pro";
-    }
-    return "gemini-3-pro";
   }
   if (normalized.includes("classic")) {
     return "gpt-5-pro";

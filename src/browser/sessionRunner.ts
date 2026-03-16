@@ -21,6 +21,11 @@ export interface BrowserExecutionResult {
   answerText: string;
 }
 
+export interface BrowserPrefillResult {
+  elapsedMs: number;
+  runtime: BrowserRuntimeMetadata;
+}
+
 interface RunBrowserSessionArgs {
   runOptions: RunOracleOptions;
   browserConfig: BrowserSessionConfig;
@@ -34,13 +39,12 @@ export interface BrowserSessionRunnerDeps {
   persistRuntimeHint?: (runtime: BrowserRuntimeMetadata) => Promise<void> | void;
 }
 
-export async function runBrowserSessionExecution(
-  { runOptions, browserConfig, cwd, log }: RunBrowserSessionArgs,
-  deps: BrowserSessionRunnerDeps = {},
-): Promise<BrowserExecutionResult> {
-  const assemblePrompt = deps.assemblePrompt ?? assembleBrowserPrompt;
-  const executeBrowser = deps.executeBrowser ?? runBrowserMode;
-  const promptArtifacts = await assemblePrompt(runOptions, { cwd });
+function logPromptArtifacts(
+  runOptions: RunOracleOptions,
+  browserConfig: BrowserSessionConfig,
+  promptArtifacts: Awaited<ReturnType<typeof assembleBrowserPrompt>>,
+  log: (message?: string) => void,
+) {
   if (runOptions.verbose) {
     log(
       chalk.dim(
@@ -77,7 +81,12 @@ export async function runBrowserSessionExecution(
       ),
     );
   }
-  const headerLine = `Launching browser mode (${runOptions.model}) with ~${promptArtifacts.estimatedInputTokens.toLocaleString()} tokens.`;
+}
+
+function createAutomationLogger(
+  runOptions: RunOracleOptions,
+  log: (message?: string) => void,
+): BrowserLogger {
   const automationLogger: BrowserLogger = ((message?: string) => {
     if (typeof message !== "string") return;
     const shouldAlwaysPrint = message.startsWith("[browser] ") && /fallback|retry/i.test(message);
@@ -86,6 +95,19 @@ export async function runBrowserSessionExecution(
   }) as BrowserLogger;
   automationLogger.verbose = Boolean(runOptions.verbose);
   automationLogger.sessionLog = runOptions.verbose ? log : () => {};
+  return automationLogger;
+}
+
+export async function runBrowserSessionExecution(
+  { runOptions, browserConfig, cwd, log }: RunBrowserSessionArgs,
+  deps: BrowserSessionRunnerDeps = {},
+): Promise<BrowserExecutionResult> {
+  const assemblePrompt = deps.assemblePrompt ?? assembleBrowserPrompt;
+  const executeBrowser = deps.executeBrowser ?? runBrowserMode;
+  const promptArtifacts = await assemblePrompt(runOptions, { cwd });
+  logPromptArtifacts(runOptions, browserConfig, promptArtifacts, log);
+  const headerLine = `Launching browser mode (${runOptions.model}) with ~${promptArtifacts.estimatedInputTokens.toLocaleString()} tokens.`;
+  const automationLogger = createAutomationLogger(runOptions, log);
 
   log(headerLine);
   log(chalk.dim("This run can take up to an hour (usually ~10 minutes)."));
@@ -170,5 +192,65 @@ export async function runBrowserSessionExecution(
       controllerPid: browserResult.controllerPid ?? process.pid,
     },
     answerText,
+  };
+}
+
+export async function runBrowserDryRunExecution(
+  { runOptions, browserConfig, cwd, log }: RunBrowserSessionArgs,
+  deps: BrowserSessionRunnerDeps = {},
+): Promise<BrowserPrefillResult> {
+  const assemblePrompt = deps.assemblePrompt ?? assembleBrowserPrompt;
+  const executeBrowser = deps.executeBrowser ?? runBrowserMode;
+  const promptArtifacts = await assemblePrompt(runOptions, { cwd });
+  logPromptArtifacts(runOptions, browserConfig, promptArtifacts, log);
+
+  const automationLogger = createAutomationLogger(runOptions, log);
+  log(
+    `Preparing browser dry-run (${runOptions.model}) with ~${promptArtifacts.estimatedInputTokens.toLocaleString()} tokens.`,
+  );
+  log(chalk.dim("Opening ChatGPT, filling the composer, and stopping before send."));
+  if (runOptions.verbose) {
+    log(chalk.dim("Chrome automation does not stream output; this may take a minute..."));
+  }
+
+  let browserResult: BrowserRunResult;
+  try {
+    browserResult = await executeBrowser({
+      prompt: promptArtifacts.composerText,
+      attachments: promptArtifacts.attachments,
+      prepareOnly: true,
+      fallbackSubmission: promptArtifacts.fallback
+        ? {
+            prompt: promptArtifacts.fallback.composerText,
+            attachments: promptArtifacts.fallback.attachments,
+          }
+        : undefined,
+      config: browserConfig,
+      log: automationLogger,
+      heartbeatIntervalMs: runOptions.heartbeatIntervalMs,
+      verbose: runOptions.verbose,
+    });
+  } catch (error) {
+    if (error instanceof BrowserAutomationError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : "Browser automation failed.";
+    throw new BrowserAutomationError(message, { stage: "prepare-browser" }, error);
+  }
+
+  log(chalk.green("Prompt prepared in ChatGPT. Nothing was sent."));
+  if (browserResult.tabUrl) {
+    log(chalk.dim(`Prepared tab: ${browserResult.tabUrl}`));
+  }
+
+  return {
+    elapsedMs: browserResult.tookMs,
+    runtime: {
+      chromePid: browserResult.chromePid,
+      chromePort: browserResult.chromePort,
+      chromeHost: browserResult.chromeHost,
+      userDataDir: browserResult.userDataDir,
+      controllerPid: browserResult.controllerPid ?? process.pid,
+    },
   };
 }

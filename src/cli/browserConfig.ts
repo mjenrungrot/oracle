@@ -16,9 +16,11 @@ import type { CookieParam } from "../browser/types.js";
 import { getOracleHomeDir } from "../oracleHome.js";
 
 const DEFAULT_BROWSER_TIMEOUT_MS = 1_200_000;
-const DEFAULT_BROWSER_INPUT_TIMEOUT_MS = 60_000;
+const DEFAULT_BROWSER_INPUT_TIMEOUT_MS = 120_000;
 const DEFAULT_BROWSER_RECHECK_TIMEOUT_MS = 120_000;
-const DEFAULT_BROWSER_AUTO_REATTACH_TIMEOUT_MS = 120_000;
+const DEFAULT_BROWSER_AUTO_REATTACH_DELAY_MS = 5_000;
+const DEFAULT_BROWSER_AUTO_REATTACH_INTERVAL_MS = 3_000;
+const DEFAULT_BROWSER_AUTO_REATTACH_TIMEOUT_MS = 60_000;
 const DEFAULT_CHROME_PROFILE = "Default";
 
 // Ordered array: most specific models first to ensure correct selection.
@@ -35,8 +37,6 @@ const BROWSER_MODEL_LABELS: [ModelName, string][] = [
   ["gpt-5.4", "Thinking 5.4"],
   ["gpt-5.2", "GPT-5.2"], // Selects "Auto" in ChatGPT UI
   ["gpt-5.1", "GPT-5.2"], // Legacy alias → Auto
-  ["gemini-3-pro", "Gemini 3 Pro"],
-  ["gemini-3-pro-deep-think", "gemini-3-deep-think"],
 ];
 
 export interface BrowserFlagOptions {
@@ -110,9 +110,7 @@ export async function buildBrowserConfig(
   const desiredModelOverride = options.browserModelLabel?.trim();
   const normalizedOverride = desiredModelOverride?.toLowerCase() ?? "";
   const baseModel = options.model.toLowerCase();
-  const isChatGptModel = baseModel.startsWith("gpt-") && !baseModel.includes("codex");
-  const shouldUseOverride =
-    !isChatGptModel && normalizedOverride.length > 0 && normalizedOverride !== baseModel;
+  const shouldUseOverride = normalizedOverride.length > 0 && normalizedOverride !== baseModel;
   const modelStrategy =
     normalizeBrowserModelStrategy(options.browserModelStrategy) ?? DEFAULT_MODEL_STRATEGY;
   const cookieNames = parseCookieNames(
@@ -136,11 +134,12 @@ export async function buildBrowserConfig(
   const rawUrl = options.chatgptUrl ?? options.browserUrl;
   const url = rawUrl ? normalizeChatgptUrl(rawUrl, CHATGPT_URL) : undefined;
 
-  const desiredModel = isChatGptModel
-    ? mapModelToBrowserLabel(options.model)
-    : shouldUseOverride
-      ? desiredModelOverride
-      : mapModelToBrowserLabel(options.model);
+  const desiredModel = shouldUseOverride
+    ? desiredModelOverride
+    : mapModelToBrowserLabel(options.model);
+  const manualLogin = options.browserManualLogin ?? true;
+  const defaultManualLoginProfileDir = path.join(getOracleHomeDir(), "browser-profile");
+  const cookieSync = options.browserNoCookieSync ? false : manualLogin ? false : true;
 
   if (
     modelStrategy === "select" &&
@@ -165,7 +164,7 @@ export async function buildBrowserConfig(
       : undefined,
     inputTimeoutMs: options.browserInputTimeout
       ? parseDuration(options.browserInputTimeout, DEFAULT_BROWSER_INPUT_TIMEOUT_MS)
-      : undefined,
+      : DEFAULT_BROWSER_INPUT_TIMEOUT_MS,
     assistantRecheckDelayMs: options.browserRecheckDelay
       ? parseDuration(options.browserRecheckDelay, 0)
       : undefined,
@@ -179,25 +178,30 @@ export async function buildBrowserConfig(
       ? parseDuration(options.browserProfileLockTimeout, 0)
       : undefined,
     autoReattachDelayMs: options.browserAutoReattachDelay
-      ? parseDuration(options.browserAutoReattachDelay, 0)
-      : undefined,
+      ? parseDuration(options.browserAutoReattachDelay, DEFAULT_BROWSER_AUTO_REATTACH_DELAY_MS)
+      : DEFAULT_BROWSER_AUTO_REATTACH_DELAY_MS,
     autoReattachIntervalMs: options.browserAutoReattachInterval
-      ? parseDuration(options.browserAutoReattachInterval, 0)
-      : undefined,
+      ? parseDuration(
+          options.browserAutoReattachInterval,
+          DEFAULT_BROWSER_AUTO_REATTACH_INTERVAL_MS,
+        )
+      : DEFAULT_BROWSER_AUTO_REATTACH_INTERVAL_MS,
     autoReattachTimeoutMs: options.browserAutoReattachTimeout
       ? parseDuration(options.browserAutoReattachTimeout, DEFAULT_BROWSER_AUTO_REATTACH_TIMEOUT_MS)
-      : undefined,
+      : DEFAULT_BROWSER_AUTO_REATTACH_TIMEOUT_MS,
     cookieSyncWaitMs: options.browserCookieWait
       ? parseDuration(options.browserCookieWait, 0)
       : undefined,
-    cookieSync: options.browserNoCookieSync ? false : undefined,
+    cookieSync,
     cookieNames,
     inlineCookies: inline?.cookies,
     inlineCookiesSource: inline?.source ?? null,
     headless: undefined, // disable headless; Cloudflare blocks it
     keepBrowser: options.browserKeepBrowser ? true : undefined,
-    manualLogin: options.browserManualLogin === undefined ? undefined : options.browserManualLogin,
-    manualLoginProfileDir: options.browserManualLoginProfileDir ?? undefined,
+    manualLogin,
+    manualLoginProfileDir: manualLogin
+      ? options.browserManualLoginProfileDir ?? defaultManualLoginProfileDir
+      : undefined,
     hideWindow: options.browserHideWindow ? true : undefined,
     desiredModel,
     modelStrategy,

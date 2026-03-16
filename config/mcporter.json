@@ -21,15 +21,16 @@
       "lifecycle": "ephemeral"
     },
     "iterm": {
-      "command": "/Users/steipete/Projects/iterm-mcp/build/index.js"
+      "command": "/path/to/iterm-mcp/build/index.js"
     },
     "oracle": {
-      "command": "npx",
-      "args": ["-y", "@steipete/oracle", "oracle-mcp"],
+      "description": "Deprecated oracle-mcp stub. MCP is no longer supported in this fork.",
+      "command": "node",
+      "args": ["../dist/bin/oracle-mcp.js"],
       "root": ".."
     },
     "oracle-local": {
-      "description": "Local oracle-mcp built from dist/bin/oracle-mcp.js",
+      "description": "Deprecated oracle-mcp stub. MCP is no longer supported in this fork.",
       "command": "node",
       "args": ["../dist/bin/oracle-mcp.js"],
       "root": ".."

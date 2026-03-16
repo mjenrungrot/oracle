@@ -13,15 +13,15 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   chatgptUrl: CHATGPT_URL,
   timeoutMs: 1_200_000,
   debugPort: null,
-  inputTimeoutMs: 60_000,
+  inputTimeoutMs: 120_000,
   assistantRecheckDelayMs: 0,
   assistantRecheckTimeoutMs: 120_000,
   reuseChromeWaitMs: 10_000,
   profileLockTimeoutMs: 300_000,
-  autoReattachDelayMs: 0,
-  autoReattachIntervalMs: 0,
-  autoReattachTimeoutMs: 120_000,
-  cookieSync: true,
+  autoReattachDelayMs: 5_000,
+  autoReattachIntervalMs: 3_000,
+  autoReattachTimeoutMs: 60_000,
+  cookieSync: false,
   cookieNames: null,
   cookieSyncWaitMs: 0,
   inlineCookies: null,
@@ -34,7 +34,7 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   debug: false,
   allowCookieErrors: false,
   remoteChrome: null,
-  manualLogin: false,
+  manualLogin: true,
   manualLoginProfileDir: null,
   manualLoginCookieSync: false,
 };
@@ -69,10 +69,8 @@ export function resolveBrowserConfig(
         'Remove "temporary-chat=true" from your browser URL, or use a non-Pro model label (e.g. "GPT-5.2").',
     );
   }
-  const isWindows = process.platform === "win32";
-  const manualLogin =
-    config?.manualLogin ?? (isWindows ? true : DEFAULT_BROWSER_CONFIG.manualLogin);
-  const cookieSyncDefault = isWindows ? false : DEFAULT_BROWSER_CONFIG.cookieSync;
+  const manualLogin = config?.manualLogin ?? DEFAULT_BROWSER_CONFIG.manualLogin;
+  const cookieSyncDefault = manualLogin ? false : true;
   const resolvedProfileDir =
     config?.manualLoginProfileDir ??
     process.env.ORACLE_BROWSER_PROFILE_DIR ??

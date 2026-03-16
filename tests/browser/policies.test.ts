@@ -59,14 +59,20 @@ describe("buildCookiePlan", () => {
     expect(plan.description).toContain("inline payload (1) via test");
   });
 
+  test("manual-login profile is the default plan", () => {
+    const plan = buildCookiePlan({});
+    expect(plan.type).toBe("manual");
+    expect(plan.description).toContain("persistent manual-login profile");
+  });
+
   test("disabled cookie sync plan", () => {
-    const plan = buildCookiePlan({ cookieSync: false });
+    const plan = buildCookiePlan({ manualLogin: false, cookieSync: false });
     expect(plan.type).toBe("disabled");
     expect(plan.description).toContain("sync disabled");
   });
 
-  test("copy from Chrome default allowlist", () => {
-    const plan = buildCookiePlan({});
+  test("copy from Chrome allowlist when manual login is disabled", () => {
+    const plan = buildCookiePlan({ manualLogin: false });
     expect(plan.type).toBe("copy");
     expect(plan.description).toContain("all from Chrome profile");
   });

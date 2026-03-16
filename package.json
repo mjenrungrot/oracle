@@ -1,17 +1,17 @@
 {
   "name": "@steipete/oracle",
   "version": "0.9.0",
-  "description": "CLI wrapper around OpenAI Responses API with GPT-5.4 Pro, GPT-5.4, GPT-5.2, GPT-5.1, and GPT-5.1 Codex high reasoning modes.",
+  "description": "Browser-only ChatGPT CLI for large-context local runs and remote browser automation.",
   "keywords": [],
-  "homepage": "https://github.com/steipete/oracle#readme",
+  "homepage": "https://github.com/mjenrungrot/oracle#readme",
   "bugs": {
-    "url": "https://github.com/steipete/oracle/issues"
+    "url": "https://github.com/mjenrungrot/oracle/issues"
   },
   "license": "MIT",
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/steipete/oracle.git"
+    "url": "git+https://github.com/mjenrungrot/oracle.git"
   },
   "bin": {
     "oracle": "dist/bin/oracle-cli.js",
@@ -42,16 +42,12 @@
     "lint": "pnpm run typecheck && oxlint",
     "lint:fix": "oxlint --fix && pnpm run format",
     "test": "vitest run",
-    "test:mcp": "pnpm run build && pnpm run test:mcp:unit && pnpm run test:mcp:mcporter",
-    "test:mcp:unit": "vitest run tests/mcp*.test.ts tests/mcp/**/*.test.ts",
-    "test:mcp:mcporter": "npx -y mcporter list oracle-local --schema --config config/mcporter.json && npx -y mcporter call oracle-local.sessions limit:1 --config config/mcporter.json",
     "test:browser": "pnpm run build && tsx scripts/test-browser.ts && ./scripts/browser-smoke.sh",
-    "test:live": "ORACLE_LIVE_TEST=1 vitest run tests/live --exclude tests/live/openai-live.test.ts",
+    "test:live": "ORACLE_LIVE_TEST=1 vitest run tests/live/browser-fast-live.test.ts",
     "test:live:fast": "ORACLE_LIVE_TEST=1 ORACLE_LIVE_TEST_FAST=1 vitest run tests/live/browser-fast-live.test.ts",
-    "test:pro": "ORACLE_LIVE_TEST=1 vitest run tests/live/openai-live.test.ts",
     "test:coverage": "vitest run --coverage",
     "prepare": "pnpm run build",
-    "mcp": "pnpm run build && node ./dist/bin/oracle-mcp.js"
+    "oracle-mcp": "node ./dist/bin/oracle-mcp.js"
   },
   "dependencies": {
     "@anthropic-ai/tokenizer": "^0.0.4",

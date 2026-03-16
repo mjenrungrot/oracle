@@ -57,7 +57,7 @@ import {
   writeChromePid,
   writeDevToolsActivePort,
 } from "./profileState.js";
-import { runProviderSubmissionFlow } from "./providerDomFlow.js";
+import { runProviderPreparationFlow, runProviderSubmissionFlow } from "./providerDomFlow.js";
 import { chatgptDomProvider } from "./providers/index.js";
 
 export type { BrowserAutomationConfig, BrowserRunOptions, BrowserRunResult } from "./types.js";
@@ -85,6 +85,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
 
   const attachments: BrowserAttachment[] = options.attachments ?? [];
   const fallbackSubmission = options.fallbackSubmission;
+  const prepareOnly = options.prepareOnly === true;
 
   let config = resolveBrowserConfig(options.config);
   const logger: BrowserLogger = options.log ?? ((_message: string) => {});
@@ -499,7 +500,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       profileLock = null;
       await handle.release().catch(() => undefined);
     };
-    const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+    const prepareSubmission = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
       const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
       const baselineAssistantText =
         typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
@@ -561,13 +562,18 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames: sendAttachmentNames,
       };
-      await runProviderSubmissionFlow(chatgptDomProvider, {
+      const providerCtx = {
         prompt,
         evaluate: async () => undefined,
         delay,
         log: logger,
         state: providerState,
-      });
+      };
+      if (prepareOnly) {
+        await runProviderPreparationFlow(chatgptDomProvider, providerCtx);
+        return { baselineTurns, baselineAssistantText };
+      }
+      await runProviderSubmissionFlow(chatgptDomProvider, providerCtx);
       const providerBaselineTurns = providerState.baselineTurns;
       if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
         baselineTurns = providerBaselineTurns;
@@ -602,7 +608,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     await acquireProfileLockIfNeeded();
     try {
       try {
-        const submission = await raceWithDisconnect(submitOnce(promptText, attachments));
+        const submission = await raceWithDisconnect(prepareSubmission(promptText, attachments));
         baselineTurns = submission.baselineTurns;
         baselineAssistantText = submission.baselineAssistantText;
       } catch (error) {
@@ -615,7 +621,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           await raceWithDisconnect(clearPromptComposer(Runtime, logger));
           await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
           const submission = await raceWithDisconnect(
-            submitOnce(fallbackSubmission.prompt, fallbackSubmission.attachments),
+            prepareSubmission(fallbackSubmission.prompt, fallbackSubmission.attachments),
           );
           baselineTurns = submission.baselineTurns;
           baselineAssistantText = submission.baselineAssistantText;
@@ -625,6 +631,25 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       }
     } finally {
       await releaseProfileLockIfHeld();
+    }
+    if (prepareOnly) {
+      runStatus = "complete";
+      await captureRuntimeSnapshot().catch(() => undefined);
+      return {
+        answerText: "",
+        answerMarkdown: "",
+        answerHtml: undefined,
+        tookMs: Date.now() - startedAt,
+        answerTokens: 0,
+        answerChars: 0,
+        chromePid: chrome.pid,
+        chromePort: chrome.port,
+        chromeHost,
+        userDataDir,
+        chromeTargetId: lastTargetId,
+        tabUrl: lastUrl,
+        controllerPid: process.pid,
+      };
     }
     stopThinkingMonitor = startThinkingStatusMonitor(Runtime, logger, options.verbose ?? false);
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
@@ -1008,12 +1033,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     // Close the isolated tab once the response has been fully captured to prevent
     // tab accumulation across repeated runs. Keep the tab open on incomplete runs
     // so reattach can recover the response.
-    if (runStatus === "complete" && isolatedTargetId && chrome?.port) {
+    if (runStatus === "complete" && !prepareOnly && isolatedTargetId && chrome?.port) {
       await closeTab(chrome.port, isolatedTargetId, logger, chromeHost).catch(() => undefined);
     }
     removeDialogHandler?.();
     removeTerminationHooks?.();
-    const keepBrowserOpen = effectiveKeepBrowser || preserveBrowserOnError;
+    const keepBrowserOpen = effectiveKeepBrowser || preserveBrowserOnError || prepareOnly;
     if (!keepBrowserOpen) {
       if (!connectionClosedUnexpectedly) {
         try {
@@ -1263,6 +1288,7 @@ async function runRemoteBrowserMode(
   logger: BrowserLogger,
   options: BrowserRunOptions,
 ): Promise<BrowserRunResult> {
+  const prepareOnly = options.prepareOnly === true;
   const remoteChromeConfig = config.remoteChrome;
   if (!remoteChromeConfig) {
     throw new Error(
@@ -1379,7 +1405,7 @@ async function runRemoteBrowserMode(
       });
     }
 
-    const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+    const prepareSubmission = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
       const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
       const baselineAssistantText =
         typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
@@ -1413,13 +1439,18 @@ async function runRemoteBrowserMode(
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames,
       };
-      await runProviderSubmissionFlow(chatgptDomProvider, {
+      const providerCtx = {
         prompt,
         evaluate: async () => undefined,
         delay,
         log: logger,
         state: providerState,
-      });
+      };
+      if (prepareOnly) {
+        await runProviderPreparationFlow(chatgptDomProvider, providerCtx);
+        return { baselineTurns, baselineAssistantText };
+      }
+      await runProviderSubmissionFlow(chatgptDomProvider, providerCtx);
       const providerBaselineTurns = providerState.baselineTurns;
       if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
         baselineTurns = providerBaselineTurns;
@@ -1430,7 +1461,7 @@ async function runRemoteBrowserMode(
     let baselineTurns: number | null = null;
     let baselineAssistantText: string | null = null;
     try {
-      const submission = await submitOnce(promptText, attachments);
+      const submission = await prepareSubmission(promptText, attachments);
       baselineTurns = submission.baselineTurns;
       baselineAssistantText = submission.baselineAssistantText;
     } catch (error) {
@@ -1441,7 +1472,7 @@ async function runRemoteBrowserMode(
         logger("[browser] Inline prompt too large; retrying with file uploads.");
         await clearPromptComposer(Runtime, logger);
         await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
-        const submission = await submitOnce(
+        const submission = await prepareSubmission(
           options.fallbackSubmission.prompt,
           options.fallbackSubmission.attachments,
         );
@@ -1450,6 +1481,35 @@ async function runRemoteBrowserMode(
       } else {
         throw error;
       }
+    }
+    if (prepareOnly) {
+      try {
+        const { result } = await Runtime.evaluate({
+          expression: "location.href",
+          returnByValue: true,
+        });
+        if (typeof result?.value === "string") {
+          lastUrl = result.value;
+        }
+      } catch {
+        // ignore
+      }
+      await emitRuntimeHint();
+      return {
+        answerText: "",
+        answerMarkdown: "",
+        answerHtml: undefined,
+        tookMs: Date.now() - startedAt,
+        answerTokens: 0,
+        answerChars: 0,
+        chromePid: undefined,
+        chromePort: port,
+        chromeHost: host,
+        userDataDir: undefined,
+        chromeTargetId: remoteTargetId ?? undefined,
+        tabUrl: lastUrl,
+        controllerPid: process.pid,
+      };
     }
     stopThinkingMonitor = startThinkingStatusMonitor(Runtime, logger, options.verbose ?? false);
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
@@ -1756,7 +1816,9 @@ async function runRemoteBrowserMode(
       // ignore
     }
     removeDialogHandler?.();
-    await closeRemoteChromeTarget(host, port, remoteTargetId ?? undefined, logger);
+    if (!prepareOnly) {
+      await closeRemoteChromeTarget(host, port, remoteTargetId ?? undefined, logger);
+    }
     // Don't kill remote Chrome - it's not ours to manage
     const totalSeconds = (Date.now() - startedAt) / 1000;
     logger(`Remote session complete • ${totalSeconds.toFixed(1)}s total`);

@@ -5,15 +5,20 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { Command, Option } from "commander";
 import type { OptionValues } from "commander";
-// Allow `npx @steipete/oracle oracle-mcp` to resolve the MCP server even though npx runs the default binary.
-if (process.argv[2] === "oracle-mcp") {
-  const { startMcpServer } = await import("../src/mcp/server.js");
-  await startMcpServer();
-  process.exit(0);
-}
-import { resolveEngine, type EngineMode, defaultWaitPreference } from "../src/cli/engine.js";
-import { shouldRequirePrompt } from "../src/cli/promptRequirement.js";
 import chalk from "chalk";
+import {
+  browserOnlyEngineMessage,
+  collectDeprecatedConfigWarnings,
+  deprecatedFeatureMessage,
+  mcpDeprecationMessage,
+} from "../src/cli/deprecation.js";
+
+if (process.argv[2] === "oracle-mcp") {
+  console.error(mcpDeprecationMessage("oracle oracle-mcp"));
+  process.exit(1);
+}
+import { type EngineMode, defaultWaitPreference } from "../src/cli/engine.js";
+import { shouldRequirePrompt } from "../src/cli/promptRequirement.js";
 import type { SessionMetadata, SessionMode, BrowserSessionConfig } from "../src/sessionStore.js";
 import { sessionStore, pruneOldSessions } from "../src/sessionStore.js";
 import {
@@ -27,11 +32,11 @@ import { isKnownModel } from "../src/oracle/modelResolver.js";
 import type { ModelName, PreviewMode, RunOracleOptions } from "../src/oracle.js";
 import { CHATGPT_URL } from "../src/browserMode.js";
 import { createRemoteBrowserExecutor } from "../src/remote/client.js";
-import { createGeminiWebExecutor } from "../src/gemini-web/index.js";
 import { applyHelpStyling } from "../src/cli/help.js";
 import {
   collectPaths,
   collectModelList,
+  detectLegacyDryRunMode,
   parseFloatOption,
   parseIntOption,
   parseSearchOption,
@@ -40,7 +45,6 @@ import {
   normalizeModelOption,
   normalizeBaseUrl,
   resolveApiModel,
-  inferModelFromLabel,
   parseHeartbeatOption,
   parseTimeoutOption,
   parseDurationOption,
@@ -51,9 +55,16 @@ import { copyToClipboard } from "../src/cli/clipboard.js";
 import { buildMarkdownBundle } from "../src/cli/markdownBundle.js";
 import { shouldDetachSession } from "../src/cli/detach.js";
 import { applyHiddenAliases } from "../src/cli/hiddenAliases.js";
-import { buildBrowserConfig, resolveBrowserModelLabel } from "../src/cli/browserConfig.js";
+import {
+  buildBrowserConfig,
+  normalizeChatGptModelForBrowser,
+  resolveBrowserModelLabel,
+} from "../src/cli/browserConfig.js";
 import { performSessionRun } from "../src/cli/sessionRunner.js";
-import type { BrowserSessionRunnerDeps } from "../src/browser/sessionRunner.js";
+import {
+  runBrowserDryRunExecution,
+  type BrowserSessionRunnerDeps,
+} from "../src/browser/sessionRunner.js";
 import { isMediaFile } from "../src/browser/prompt.js";
 import { attachSession, showStatus, formatCompletionSummary } from "../src/cli/sessionDisplay.js";
 import { formatCompactNumber } from "../src/cli/format.js";
@@ -61,7 +72,6 @@ import { formatIntroLine } from "../src/cli/tagline.js";
 import { warnIfOversizeBundle } from "../src/cli/bundleWarnings.js";
 import { formatRenderedMarkdown } from "../src/cli/renderOutput.js";
 import { resolveRenderFlag, resolveRenderPlain } from "../src/cli/renderFlags.js";
-import { resolveGeminiModelId } from "../src/oracle/gemini.js";
 import {
   handleSessionCommand,
   type StatusOptions,
@@ -246,7 +256,7 @@ program.hook("preAction", (thisCommand) => {
 program
   .name("oracle")
   .description(
-    "One-shot GPT-5.4 Pro / GPT-5.4 / GPT-5.1 Codex tool for hard questions that benefit from large file context and server-side search.",
+    "Browser-only ChatGPT CLI for hard questions that benefit from large file context.",
   )
   .version(VERSION)
   .argument("[prompt]", "Prompt text (shorthand for --prompt).")
@@ -254,11 +264,11 @@ program
   .addOption(new Option("--message <text>", "Alias for --prompt.").hideHelp())
   .option(
     "--followup <sessionId|responseId>",
-    "Continue an OpenAI/Azure Responses API run from a stored response id (resp_...) or from a stored oracle session id.",
+    "Deprecated. Follow-up API chaining is no longer supported in the local repository.",
   )
   .option(
     "--followup-model <model>",
-    "When following up a multi-model session, choose which model response to continue from.",
+    "Deprecated. Multi-model follow-up selection is no longer supported locally.",
   )
   .option(
     "-f, --file <paths...>",
@@ -300,13 +310,13 @@ program
   .option("-s, --slug <words>", "Custom session slug (3-5 words).")
   .option(
     "-m, --model <model>",
-    'Model to target (gpt-5.4-pro default). Also gpt-5.4, gpt-5.1-pro, gpt-5-pro, gpt-5.1, gpt-5.1-codex API-only, gpt-5.2, gpt-5.2-instant, gpt-5.2-pro, gemini-3.1-pro API-only, gemini-3-pro, claude-4.5-sonnet, claude-4.1-opus, or ChatGPT labels like "5.2 Thinking" for browser runs).',
+    'ChatGPT/GPT model to target (gpt-5.4-pro default). Supports GPT browser aliases like "5.2 Thinking" and maps legacy GPT aliases to current ChatGPT picker targets.',
     normalizeModelOption,
   )
   .addOption(
     new Option(
       "--models <models>",
-      'Comma-separated API model list to query in parallel (e.g., "gpt-5.4-pro,gemini-3-pro").',
+      "Deprecated. Multi-model fan-out is no longer supported locally.",
     )
       .argParser(collectModelList)
       .default([]),
@@ -314,7 +324,7 @@ program
   .addOption(
     new Option(
       "-e, --engine <mode>",
-      "Execution engine (api | browser). Browser engine: GPT models automate ChatGPT; Gemini models use a cookie-based client for gemini.google.com. If omitted, oracle picks api when OPENAI_API_KEY is set, otherwise browser.",
+      "Execution engine (api | browser). Local oracle supports browser mode only; api remains as a deprecated compatibility flag that exits with guidance.",
     ).choices(["api", "browser"]),
   )
   .addOption(
@@ -344,7 +354,7 @@ program
   .addOption(
     new Option(
       "--timeout <seconds|auto>",
-      "Overall timeout before aborting the API call (auto = 60m for gpt-5.4-pro, 120s otherwise).",
+      "Overall timeout before aborting the browser run (auto uses model defaults).",
     )
       .argParser(parseTimeoutOption)
       .default("auto"),
@@ -352,14 +362,15 @@ program
   .addOption(
     new Option(
       "--background",
-      "Use Responses API background mode (create + retrieve) for API runs.",
+      "Deprecated. Background API mode is no longer supported locally.",
     ).default(undefined),
   )
   .addOption(
-    new Option("--no-background", "Disable Responses API background mode.").default(undefined),
+    new Option("--no-background", "Deprecated. Background API mode is no longer supported.")
+      .default(undefined),
   )
   .addOption(
-    new Option("--http-timeout <ms|s|m|h>", "HTTP client timeout for API requests (default 20m).")
+    new Option("--http-timeout <ms|s|m|h>", "Deprecated. API transport timeouts are no longer supported locally.")
       .argParser((value) => parseDurationOption(value, "HTTP timeout"))
       .default(undefined),
   )
@@ -379,18 +390,12 @@ program
   .addOption(
     new Option(
       "--preview [mode]",
-      "(alias) Preview the request without calling the model (summary | json | full). Deprecated: use --dry-run instead.",
+      "Preview the request without calling the model (summary | json | full).",
     )
-      .hideHelp()
       .choices(["summary", "json", "full"])
       .preset("summary"),
   )
-  .addOption(
-    new Option("--dry-run [mode]", "Preview without calling the model (summary | json | full).")
-      .choices(["summary", "json", "full"])
-      .preset("summary")
-      .default(false),
-  )
+  .option("--dry-run", "Launch ChatGPT, fill the composer, and stop before send.", false)
   .addOption(new Option("--exec-session <id>").hideHelp())
   .addOption(new Option("--session <id>").hideHelp())
   .addOption(
@@ -415,7 +420,7 @@ program
   )
   .option("--verbose-render", "Show render/TTY diagnostics when replaying sessions.", false)
   .addOption(
-    new Option("--search <mode>", "Set server-side search behavior (on/off).")
+    new Option("--search <mode>", "Deprecated. Browser mode no longer exposes search toggles.")
       .argParser(parseSearchOption)
       .hideHelp(),
   )
@@ -431,14 +436,14 @@ program
   )
   .option(
     "--base-url <url>",
-    "Override the OpenAI-compatible base URL for API runs (e.g. LiteLLM proxy endpoint).",
+    "Deprecated. Custom API base URLs are no longer supported locally.",
   )
   .option(
     "--azure-endpoint <url>",
-    "Azure OpenAI Endpoint (e.g. https://resource.openai.azure.com/).",
+    "Deprecated. Azure OpenAI endpoints are no longer supported locally.",
   )
-  .option("--azure-deployment <name>", "Azure OpenAI Deployment Name.")
-  .option("--azure-api-version <version>", "Azure OpenAI API Version.")
+  .option("--azure-deployment <name>", "Deprecated. Azure OpenAI deployments are no longer supported locally.")
+  .option("--azure-api-version <version>", "Deprecated. Azure OpenAI versions are no longer supported locally.")
   .addOption(
     new Option("--browser", "(deprecated) Use --engine browser instead.").default(false).hideHelp(),
   )
@@ -636,37 +641,37 @@ program
   .addOption(
     new Option(
       "--youtube <url>",
-      "YouTube video URL to analyze (Gemini web/cookie mode only; uses your signed-in Chrome cookies for gemini.google.com).",
+      "Deprecated. Gemini browser workflows are no longer supported locally.",
     ),
   )
   .addOption(
     new Option(
       "--generate-image <file>",
-      "Generate image and save to file (Gemini web/cookie mode only; requires gemini.google.com Chrome cookies).",
+      "Deprecated. Gemini browser workflows are no longer supported locally.",
     ),
   )
   .addOption(
     new Option(
       "--edit-image <file>",
-      "Edit existing image (use with --output, Gemini web/cookie mode only).",
+      "Deprecated. Gemini browser workflows are no longer supported locally.",
     ),
   )
   .addOption(
     new Option(
       "--output <file>",
-      "Output file path for image operations (Gemini web/cookie mode only).",
+      "Deprecated. Gemini browser workflows are no longer supported locally.",
     ),
   )
   .addOption(
     new Option(
       "--aspect <ratio>",
-      "Aspect ratio for image generation: 16:9, 1:1, 4:3, 3:4 (Gemini web/cookie mode only).",
+      "Deprecated. Gemini browser workflows are no longer supported locally.",
     ),
   )
   .addOption(
     new Option(
       "--gemini-show-thoughts",
-      "Display Gemini thinking process (Gemini web/cookie mode only).",
+      "Deprecated. Gemini browser workflows are no longer supported locally.",
     ).default(false),
   )
   .option(
@@ -694,11 +699,11 @@ program.addHelpText(
   "after",
   `
 Examples:
-  # Quick API run with two files
+  # Quick browser run with two files
   oracle --prompt "Summarize the risk register" --file docs/risk-register.md docs/risk-matrix.md
 
-  # Browser run (no API key) + globbed TypeScript sources, excluding tests
-  oracle --engine browser --prompt "Review the TS data layer" \\
+  # Browser run + globbed TypeScript sources, excluding tests
+  oracle --prompt "Review the TS data layer" \\
     --file "src/**/*.ts" --file "!src/**/*.test.ts"
 
   # Build, print, and copy a markdown bundle (semi-manual)
@@ -714,8 +719,7 @@ program
   .option("--token <value>", "Access token clients must provide (random if omitted).")
   .option(
     "--manual-login",
-    "Use a dedicated Chrome profile for manual login (recommended when cookie sync is unavailable).",
-    false,
+    "Use a dedicated Chrome profile for manual login (default behavior for oracle serve).",
   )
   .option(
     "--manual-login-profile-dir <path>",
@@ -789,20 +793,20 @@ bridgeCommand
 
 bridgeCommand
   .command("codex-config")
-  .description("Print a Codex CLI MCP server config snippet for oracle-mcp.")
-  .option("--print-token", "Include ORACLE_REMOTE_TOKEN in the snippet.", false)
-  .action(async (commandOptions) => {
-    const { runBridgeCodexConfig } = await import("../src/cli/bridge/codexConfig.js");
-    await runBridgeCodexConfig(commandOptions);
+  .description("Deprecated. MCP config helpers are no longer supported locally.")
+  .option("--print-token", "Deprecated.", false)
+  .action(async () => {
+    console.error(mcpDeprecationMessage("oracle bridge codex-config"));
+    process.exitCode = 1;
   });
 
 bridgeCommand
   .command("claude-config")
-  .description("Print a Claude Code MCP config snippet (.mcp.json) for oracle-mcp.")
-  .option("--print-token", "Include ORACLE_REMOTE_TOKEN in the snippet.", false)
-  .action(async (commandOptions) => {
-    const { runBridgeClaudeConfig } = await import("../src/cli/bridge/claudeConfig.js");
-    await runBridgeClaudeConfig(commandOptions);
+  .description("Deprecated. MCP config helpers are no longer supported locally.")
+  .option("--print-token", "Deprecated.", false)
+  .action(async () => {
+    console.error(mcpDeprecationMessage("oracle bridge claude-config"));
+    process.exitCode = 1;
   });
 
 program
@@ -969,17 +973,6 @@ function buildRunOptions(
   };
 }
 
-export function enforceBrowserSearchFlag(
-  runOptions: RunOracleOptions,
-  sessionMode: SessionMode,
-  logFn: (message: string) => void = console.log,
-): void {
-  if (sessionMode === "browser" && runOptions.search === false) {
-    logFn(chalk.dim("Note: search is not available in browser engine; ignoring search=false."));
-    runOptions.search = undefined;
-  }
-}
-
 function resolveHeartbeatIntervalMs(seconds: number | undefined): number | undefined {
   if (typeof seconds !== "number" || seconds <= 0) {
     return undefined;
@@ -987,183 +980,12 @@ function resolveHeartbeatIntervalMs(seconds: number | undefined): number | undef
   return Math.round(seconds * 1000);
 }
 
-interface FollowupResolution {
-  responseId: string;
-  sessionId?: string;
-}
-
-function assertFollowupSupported({
-  engine,
-  model,
-  baseUrl,
-  azureEndpoint,
-}: {
-  engine: EngineMode;
-  model: ModelName;
-  baseUrl?: string;
-  azureEndpoint?: string;
-}): void {
-  if (engine !== "api") {
-    throw new Error("--followup requires --engine api.");
-  }
-  if (model.startsWith("gemini") || model.startsWith("claude")) {
-    throw new Error(
-      `--followup is only supported for OpenAI Responses API runs. Model ${model} uses a provider client without previous_response_id support.`,
-    );
-  }
-  if (baseUrl && !azureEndpoint) {
-    throw new Error(
-      "--followup is only supported for the default OpenAI Responses API or Azure OpenAI Responses. Custom --base-url providers are not supported.",
-    );
-  }
-}
-
-function levenshteinDistance(a: string, b: string): number {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-
-  const previous = Array.from<number>({ length: b.length + 1 });
-  const current = Array.from<number>({ length: b.length + 1 });
-  for (let j = 0; j <= b.length; j += 1) {
-    previous[j] = j;
-  }
-  for (let i = 1; i <= a.length; i += 1) {
-    current[0] = i;
-    for (let j = 1; j <= b.length; j += 1) {
-      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
-      current[j] = Math.min(
-        previous[j] + 1,
-        current[j - 1] + 1,
-        previous[j - 1] + substitutionCost,
-      );
-    }
-    for (let j = 0; j <= b.length; j += 1) {
-      previous[j] = current[j];
-    }
-  }
-  return previous[b.length];
-}
-
-function scoreSessionSimilarity(input: string, candidate: string): number {
-  if (input === candidate) return 1;
-  if (candidate.startsWith(input) || input.startsWith(candidate)) return 0.95;
-  if (candidate.includes(input) || input.includes(candidate)) return 0.8;
-  const distance = levenshteinDistance(input, candidate);
-  const maxLength = Math.max(input.length, candidate.length);
-  if (maxLength === 0) return 0;
-  return Math.max(0, 1 - distance / maxLength);
-}
-
-async function suggestFollowupSessionIds(input: string, limit = 3): Promise<string[]> {
-  const normalizedInput = input.trim().toLowerCase();
-  if (!normalizedInput) return [];
-  const sessions = await sessionStore.listSessions().catch(() => []);
-  const seen = new Set<string>();
-  const ranked = sessions
-    .map((meta) => meta.id)
-    .filter((id): id is string => typeof id === "string" && id.length > 0)
-    .filter((id) => {
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    })
-    .map((id) => ({ id, score: scoreSessionSimilarity(normalizedInput, id.toLowerCase()) }))
-    .filter((entry) => entry.score >= 0.45)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-  return ranked.map((entry) => entry.id);
-}
-
-async function resolveFollowupReference(
-  value: string,
-  followupModel?: string,
-): Promise<FollowupResolution> {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    throw new Error("--followup requires a session id or response id.");
-  }
-  if (trimmed.startsWith("resp_")) {
-    return { responseId: trimmed };
-  }
-
-  // Treat as oracle session id (slug).
-  const meta = await sessionStore.readSession(trimmed);
-  if (!meta) {
-    const suggestions = await suggestFollowupSessionIds(trimmed);
-    const suggestionText =
-      suggestions.length > 0
-        ? ` Did you mean: ${suggestions.map((id) => `"${id}"`).join(", ")}?`
-        : "";
-    throw new Error(
-      `No session found with ID ${trimmed}.${suggestionText} Run "oracle status --hours 72 --limit 20" to list recent sessions.`,
-    );
-  }
-  const fromMetadata = extractResponseIdFromSession(meta, followupModel);
-  if (fromMetadata) {
-    return { responseId: fromMetadata, sessionId: meta.id };
-  }
-
-  // Fallback: scrape the log for a response id (covers older sessions / edge cases).
-  const logText = await sessionStore.readLog(trimmed).catch(() => "");
-  const matches = logText.match(/resp_[A-Za-z0-9]+/g) ?? [];
-  const last = matches.length > 0 ? matches[matches.length - 1] : null;
-  if (last) {
-    return { responseId: last, sessionId: meta.id };
-  }
-
-  throw new Error(
-    `Session ${trimmed} does not contain a stored response id. Ensure the original run produced a Responses API response id (background/store helps).`,
-  );
-}
-
-function extractResponseIdFromSession(
-  meta: SessionMetadata,
-  followupModel?: string,
-): string | null {
-  // Single-model sessions store response metadata at the session root.
-  const rootResponse =
-    (meta as unknown as { response?: Record<string, unknown> | null }).response ?? null;
-  const rootResponseId =
-    (rootResponse?.responseId as string | undefined) ?? (rootResponse?.id as string | undefined);
-  if (rootResponseId && rootResponseId.startsWith("resp_")) {
-    return rootResponseId;
-  }
-
-  const runs = Array.isArray(meta.models) ? meta.models : [];
-  if (runs.length === 0) {
-    return null;
-  }
-  const pickRun = (): (typeof runs)[number] | null => {
-    if (followupModel) {
-      return runs.find((r) => r.model === followupModel) ?? null;
-    }
-    return runs.length === 1 ? runs[0] : null;
-  };
-  const chosen = pickRun();
-  if (!chosen) {
-    const models = runs.map((r) => r.model).join(", ");
-    throw new Error(
-      followupModel
-        ? `Session ${meta.id} has no model named ${followupModel}. Available: ${models}`
-        : `Session ${meta.id} has multiple model runs. Re-run with --followup-model. Available: ${models}`,
-    );
-  }
-  const runResponse =
-    (chosen as unknown as { response?: Record<string, unknown> | null }).response ?? null;
-  const runResponseId =
-    (runResponse?.responseId as string | undefined) ?? (runResponse?.id as string | undefined);
-  return runResponseId && runResponseId.startsWith("resp_") ? runResponseId : null;
-}
-
 function buildRunOptionsFromMetadata(metadata: SessionMetadata): RunOracleOptions {
   const stored = metadata.options ?? {};
   return {
     prompt: stored.prompt ?? "",
     model: (stored.model as ModelName) ?? DEFAULT_MODEL,
-    models: stored.models as ModelName[] | undefined,
-    previousResponseId: stored.previousResponseId,
-    effectiveModelId: stored.effectiveModelId ?? stored.model,
+    effectiveModelId: stored.effectiveModelId ?? stored.model ?? DEFAULT_MODEL,
     file: stored.file ?? [],
     maxFileSizeBytes: stored.maxFileSizeBytes,
     slug: stored.slug,
@@ -1172,14 +994,10 @@ function buildRunOptionsFromMetadata(metadata: SessionMetadata): RunOracleOption
     maxOutput: stored.maxOutput,
     system: stored.system,
     silent: stored.silent,
-    search: stored.search,
     preview: false,
     previewMode: undefined,
     apiKey: undefined,
-    baseUrl: normalizeBaseUrl(stored.baseUrl),
-    azure: stored.azure,
     timeoutSeconds: stored.timeoutSeconds,
-    httpTimeoutMs: stored.httpTimeoutMs,
     zombieTimeoutMs: stored.zombieTimeoutMs,
     zombieUseLastActivity: stored.zombieUseLastActivity,
     sessionId: metadata.id,
@@ -1188,7 +1006,6 @@ function buildRunOptionsFromMetadata(metadata: SessionMetadata): RunOracleOption
     browserAttachments: stored.browserAttachments,
     browserInlineFiles: stored.browserInlineFiles,
     browserBundleFiles: stored.browserBundleFiles,
-    background: stored.background,
     renderPlain: stored.renderPlain,
     writeOutputPath: stored.writeOutputPath,
   };
@@ -1202,6 +1019,93 @@ function getBrowserConfigFromMetadata(metadata: SessionMetadata): BrowserSession
   return metadata.options?.browserConfig ?? metadata.browser?.config;
 }
 
+function assertBrowserOnlyInvocation({
+  options,
+  userConfig,
+  optionUsesDefault,
+  multiModelProvided,
+}: {
+  options: CliOptions;
+  userConfig: UserConfig;
+  optionUsesDefault: (name: string) => boolean;
+  multiModelProvided: boolean;
+}): void {
+  if (options.engine === "api") {
+    throw new Error(browserOnlyEngineMessage("--engine api"));
+  }
+  if (optionUsesDefault("engine") && userConfig.engine === "api") {
+    throw new Error(browserOnlyEngineMessage("config engine=api"));
+  }
+  if (optionUsesDefault("engine") && process.env.ORACLE_ENGINE?.trim().toLowerCase() === "api") {
+    throw new Error(browserOnlyEngineMessage("ORACLE_ENGINE=api"));
+  }
+  if (multiModelProvided) {
+    throw new Error(deprecatedFeatureMessage("--models"));
+  }
+  if (typeof options.followup === "string" && options.followup.trim().length > 0) {
+    throw new Error(deprecatedFeatureMessage("--followup"));
+  }
+  if (typeof options.followupModel === "string" && options.followupModel.trim().length > 0) {
+    throw new Error(deprecatedFeatureMessage("--followup-model"));
+  }
+  if (!optionUsesDefault("search")) {
+    throw new Error(deprecatedFeatureMessage("--search"));
+  }
+  if (!optionUsesDefault("baseUrl")) {
+    throw new Error(deprecatedFeatureMessage("--base-url"));
+  }
+  if (!optionUsesDefault("azureEndpoint")) {
+    throw new Error(deprecatedFeatureMessage("--azure-endpoint"));
+  }
+  if (!optionUsesDefault("azureDeployment")) {
+    throw new Error(deprecatedFeatureMessage("--azure-deployment"));
+  }
+  if (!optionUsesDefault("azureApiVersion")) {
+    throw new Error(deprecatedFeatureMessage("--azure-api-version"));
+  }
+  if (!optionUsesDefault("background")) {
+    throw new Error(deprecatedFeatureMessage("--background"));
+  }
+  if (!optionUsesDefault("httpTimeout")) {
+    throw new Error(deprecatedFeatureMessage("--http-timeout"));
+  }
+  if (typeof options.youtube === "string" && options.youtube.trim().length > 0) {
+    throw new Error(deprecatedFeatureMessage("--youtube"));
+  }
+  if (typeof options.generateImage === "string" && options.generateImage.trim().length > 0) {
+    throw new Error(deprecatedFeatureMessage("--generate-image"));
+  }
+  if (typeof options.editImage === "string" && options.editImage.trim().length > 0) {
+    throw new Error(deprecatedFeatureMessage("--edit-image"));
+  }
+  if (typeof options.output === "string" && options.output.trim().length > 0) {
+    throw new Error(deprecatedFeatureMessage("--output"));
+  }
+  if (typeof options.aspect === "string" && options.aspect.trim().length > 0) {
+    throw new Error(deprecatedFeatureMessage("--aspect"));
+  }
+  if (options.geminiShowThoughts) {
+    throw new Error(deprecatedFeatureMessage("--gemini-show-thoughts"));
+  }
+}
+
+function buildLegacyDryRunModeMessage(mode: PreviewMode): string {
+  return `--dry-run ${mode} is no longer supported. Use --preview ${mode} for textual inspection, or bare --dry-run to open ChatGPT and stop before send.`;
+}
+
+function assertVisibleDryRun(options: CliOptions, remoteHost?: string): void {
+  const localVisibleBrowser = !remoteHost && !options.remoteChrome;
+  if (!options.dryRun || !localVisibleBrowser) {
+    return;
+  }
+  if (options.browserHeadless) {
+    throw new Error("--dry-run requires a visible browser; remove --browser-headless.");
+  }
+  if (options.browserHideWindow) {
+    throw new Error("--dry-run requires a visible browser; remove --browser-hide-window.");
+  }
+}
+
 async function runRootCommand(options: CliOptions): Promise<void> {
   if (process.env.ORACLE_FORCE_TUI === "1") {
     await sessionStore.ensureStorage();
@@ -1211,14 +1115,7 @@ async function runRootCommand(options: CliOptions): Promise<void> {
   const userConfig = (await loadUserConfig()).config;
   const helpRequested = rawCliArgs.some((arg: string) => arg === "--help" || arg === "-h");
   const multiModelProvided = Array.isArray(options.models) && options.models.length > 0;
-  if (multiModelProvided) {
-    const modelFromConfigOrCli = normalizeModelOption(options.model ?? userConfig.model ?? "");
-    if (modelFromConfigOrCli) {
-      throw new Error("--models cannot be combined with --model.");
-    }
-  }
   const optionUsesDefault = (name: string): boolean => {
-    // Commander reports undefined for untouched options, so treat undefined/default the same
     const source = program.getOptionValueSource?.(name);
     return source == null || source === "default";
   };
@@ -1231,7 +1128,11 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     program.help({ error: false });
     return;
   }
-  const previewMode = resolvePreviewMode(options.dryRun || options.preview);
+  const legacyDryRunMode = detectLegacyDryRunMode(userCliArgs);
+  if (legacyDryRunMode) {
+    throw new Error(buildLegacyDryRunModeMessage(legacyDryRunMode));
+  }
+  const previewMode = resolvePreviewMode(options.preview);
   const mergedFileInputs = mergePathLikeOptions(
     options.file,
     options.include,
@@ -1303,146 +1204,6 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     throw new Error("--dry-run cannot be combined with --render-markdown.");
   }
 
-  const preferredEngine = options.engine ?? userConfig.engine;
-  let engine: EngineMode = resolveEngine({
-    engine: preferredEngine,
-    browserFlag: options.browser,
-    env: process.env,
-  });
-  if (options.browser) {
-    console.log(chalk.yellow("`--browser` is deprecated; use `--engine browser` instead."));
-  }
-  if (optionUsesDefault("model") && userConfig.model) {
-    options.model = userConfig.model;
-  }
-  if (optionUsesDefault("search") && userConfig.search) {
-    options.search = userConfig.search === "on";
-  }
-  if (optionUsesDefault("filesReport") && userConfig.filesReport != null) {
-    options.filesReport = Boolean(userConfig.filesReport);
-  }
-  if (optionUsesDefault("heartbeat") && typeof userConfig.heartbeatSeconds === "number") {
-    options.heartbeat = userConfig.heartbeatSeconds;
-  }
-  if (optionUsesDefault("baseUrl") && userConfig.apiBaseUrl) {
-    options.baseUrl = userConfig.apiBaseUrl;
-  }
-
-  if (remoteHost && engine !== "browser") {
-    throw new Error("--remote-host requires --engine browser.");
-  }
-  if (remoteHost && options.remoteChrome) {
-    throw new Error("--remote-host cannot be combined with --remote-chrome.");
-  }
-
-  if (optionUsesDefault("azureEndpoint")) {
-    if (process.env.AZURE_OPENAI_ENDPOINT) {
-      options.azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
-    } else if (userConfig.azure?.endpoint) {
-      options.azureEndpoint = userConfig.azure.endpoint;
-    }
-  }
-  if (optionUsesDefault("azureDeployment")) {
-    if (process.env.AZURE_OPENAI_DEPLOYMENT) {
-      options.azureDeployment = process.env.AZURE_OPENAI_DEPLOYMENT;
-    } else if (userConfig.azure?.deployment) {
-      options.azureDeployment = userConfig.azure.deployment;
-    }
-  }
-  if (optionUsesDefault("azureApiVersion")) {
-    if (process.env.AZURE_OPENAI_API_VERSION) {
-      options.azureApiVersion = process.env.AZURE_OPENAI_API_VERSION;
-    } else if (userConfig.azure?.apiVersion) {
-      options.azureApiVersion = userConfig.azure.apiVersion;
-    }
-  }
-
-  const normalizedMultiModels: ModelName[] = multiModelProvided
-    ? Array.from(new Set(options.models!.map((entry) => resolveApiModel(entry))))
-    : [];
-  const cliModelArg =
-    normalizeModelOption(options.model) || (multiModelProvided ? "" : DEFAULT_MODEL);
-  const resolvedModelCandidate: ModelName = multiModelProvided
-    ? normalizedMultiModels[0]
-    : engine === "browser"
-      ? inferModelFromLabel(cliModelArg || DEFAULT_MODEL)
-      : resolveApiModel(cliModelArg || DEFAULT_MODEL);
-  const primaryModelCandidate = normalizedMultiModels[0] ?? resolvedModelCandidate;
-  const isGemini = primaryModelCandidate.startsWith("gemini");
-  const isCodex = primaryModelCandidate.startsWith("gpt-5.1-codex");
-  const isClaude = primaryModelCandidate.startsWith("claude");
-  const userForcedBrowser = options.browser || options.engine === "browser";
-  const isBrowserCompatible = (model: string) =>
-    model.startsWith("gpt-") || model.startsWith("gemini");
-  const hasNonBrowserCompatibleTarget =
-    (engine === "browser" || userForcedBrowser) &&
-    (normalizedMultiModels.length > 0
-      ? normalizedMultiModels.some((model) => !isBrowserCompatible(model))
-      : !isBrowserCompatible(resolvedModelCandidate));
-  if (hasNonBrowserCompatibleTarget) {
-    throw new Error(
-      "Browser engine only supports GPT and Gemini models. Re-run with --engine api for Grok, Claude, or other models.",
-    );
-  }
-  if (isClaude && engine === "browser") {
-    console.log(chalk.dim("Browser engine is not supported for Claude models; switching to API."));
-    engine = "api";
-  }
-  if (isCodex && engine === "browser") {
-    console.log(chalk.dim("Browser engine is not supported for gpt-5.1-codex; switching to API."));
-    engine = "api";
-  }
-  if (normalizedMultiModels.length > 0) {
-    engine = "api";
-  }
-  if (remoteHost && normalizedMultiModels.length > 0) {
-    throw new Error("--remote-host does not support --models yet. Use API engine locally instead.");
-  }
-  const resolvedModel: ModelName =
-    normalizedMultiModels[0] ?? (isGemini ? resolveApiModel(cliModelArg) : resolvedModelCandidate);
-  const includesGeminiApiOnly = (
-    normalizedMultiModels.length > 0 ? normalizedMultiModels : [resolvedModel]
-  ).some((model) => model === "gemini-3.1-pro");
-  if ((userForcedBrowser || userConfig.engine === "browser") && includesGeminiApiOnly) {
-    throw new Error(
-      "gemini-3.1-pro is API-only today. Use --engine api or switch to gemini-3-pro for Gemini web.",
-    );
-  }
-  if (engine === "browser" && includesGeminiApiOnly) {
-    console.log(chalk.dim("gemini-3.1-pro is API-only today; switching to API."));
-    engine = "api";
-  }
-  const effectiveModelId = resolvedModel.startsWith("gemini")
-    ? resolveGeminiModelId(resolvedModel)
-    : isKnownModel(resolvedModel)
-      ? (MODEL_CONFIGS[resolvedModel].apiModel ?? resolvedModel)
-      : resolvedModel;
-  const resolvedBaseUrl = normalizeBaseUrl(
-    options.baseUrl ?? (isClaude ? process.env.ANTHROPIC_BASE_URL : process.env.OPENAI_BASE_URL),
-  );
-  const { models: _rawModels, ...optionsWithoutModels } = options;
-  const resolvedOptions: ResolvedCliOptions = { ...optionsWithoutModels, model: resolvedModel };
-  resolvedOptions.maxFileSizeBytes = resolveConfiguredMaxFileSizeBytes(userConfig, process.env);
-  if (normalizedMultiModels.length > 0) {
-    resolvedOptions.models = normalizedMultiModels;
-  }
-  resolvedOptions.baseUrl = resolvedBaseUrl;
-  resolvedOptions.effectiveModelId = effectiveModelId;
-  resolvedOptions.writeOutputPath = resolveOutputPath(options.writeOutput, process.cwd());
-
-  // Decide whether to block until completion:
-  // - explicit --wait / --no-wait wins
-  // - otherwise block for fast models (gpt-5.1, browser) and detach by default for pro API runs
-  let waitPreference = resolveWaitFlag({
-    waitFlag: options.wait,
-    model: resolvedModel,
-    engine,
-  });
-  if (remoteHost && waitPreference === false) {
-    console.log(chalk.dim("Remote browser runs require --wait; ignoring --no-wait."));
-    waitPreference = true;
-  }
-
   if (await handleStatusFlag(options, { attachSession, showStatus })) {
     return;
   }
@@ -1454,6 +1215,58 @@ async function runRootCommand(options: CliOptions): Promise<void> {
   if (options.execSession) {
     await executeSession(options.execSession);
     return;
+  }
+
+  if (options.browser) {
+    console.log(chalk.yellow("`--browser` is deprecated; use the default browser mode instead."));
+  }
+  for (const warning of collectDeprecatedConfigWarnings(userConfig)) {
+    console.log(chalk.yellow(warning));
+  }
+  if (optionUsesDefault("model") && userConfig.model) {
+    options.model = userConfig.model;
+  }
+  if (optionUsesDefault("filesReport") && userConfig.filesReport != null) {
+    options.filesReport = Boolean(userConfig.filesReport);
+  }
+  if (optionUsesDefault("heartbeat") && typeof userConfig.heartbeatSeconds === "number") {
+    options.heartbeat = userConfig.heartbeatSeconds;
+  }
+
+  assertBrowserOnlyInvocation({ options, userConfig, optionUsesDefault, multiModelProvided });
+
+  if (remoteHost && options.remoteChrome) {
+    throw new Error("--remote-host cannot be combined with --remote-chrome.");
+  }
+  if (options.dryRun && previewMode) {
+    throw new Error(
+      "--dry-run cannot be combined with --preview. Use --preview for textual inspection or bare --dry-run to prefill ChatGPT without sending.",
+    );
+  }
+
+  const engine: EngineMode = "browser";
+  const cliModelArg = normalizeModelOption(options.model) || DEFAULT_MODEL;
+  const resolvedModel = normalizeChatGptModelForBrowser(resolveApiModel(cliModelArg));
+  const effectiveModelId = isKnownModel(resolvedModel)
+    ? (MODEL_CONFIGS[resolvedModel].apiModel ?? resolvedModel)
+    : resolvedModel;
+  const { models: _rawModels, ...optionsWithoutModels } = options;
+  const resolvedOptions: ResolvedCliOptions = {
+    ...optionsWithoutModels,
+    model: resolvedModel,
+    effectiveModelId,
+  };
+  resolvedOptions.maxFileSizeBytes = resolveConfiguredMaxFileSizeBytes(userConfig, process.env);
+  resolvedOptions.writeOutputPath = resolveOutputPath(options.writeOutput, process.cwd());
+
+  let waitPreference = resolveWaitFlag({
+    waitFlag: options.wait,
+    model: resolvedModel,
+    engine,
+  });
+  if (remoteHost && waitPreference === false) {
+    console.log(chalk.dim("Remote browser runs require --wait; ignoring --no-wait."));
+    waitPreference = true;
   }
 
   if (renderMarkdown || copyMarkdown) {
@@ -1471,7 +1284,7 @@ async function runRootCommand(options: CliOptions): Promise<void> {
       modelConfig,
       systemPrompt: bundle.systemPrompt,
       userPrompt: bundle.promptWithFiles,
-      searchEnabled: options.search !== false,
+      searchEnabled: false,
       background: false,
       storeResponse: false,
     });
@@ -1506,35 +1319,69 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     return;
   }
 
-  if (previewMode) {
+  const getSource = (key: keyof CliOptions) =>
+    program.getOptionValueSource?.(key as string) ?? undefined;
+  applyBrowserDefaultsFromConfig(options, userConfig, getSource);
+
+  if (previewMode || options.dryRun) {
     if (!options.prompt) {
-      throw new Error("Prompt is required when using --dry-run/preview.");
+      throw new Error(
+        `Prompt is required when using ${options.dryRun ? "--dry-run" : "--preview"}.`,
+      );
     }
-    if (userConfig.promptSuffix) {
-      options.prompt = `${options.prompt.trim()}\n${userConfig.promptSuffix}`;
-    }
-    resolvedOptions.prompt = options.prompt;
-    if (options.followup) {
-      assertFollowupSupported({
-        engine,
-        model: resolvedModel,
-        baseUrl: resolvedBaseUrl,
-        azureEndpoint: resolvedOptions.azure?.endpoint,
+  } else if (!options.prompt) {
+    throw new Error("Prompt is required when starting a new session.");
+  }
+
+  if (options.prompt && userConfig.promptSuffix) {
+    options.prompt = `${options.prompt.trim()}\n${userConfig.promptSuffix}`;
+  }
+  resolvedOptions.prompt = options.prompt;
+
+  if (options.file && options.file.length > 0) {
+    const filesToValidate = options.file.filter((f: string) => !isMediaFile(f));
+    if (filesToValidate.length > 0) {
+      await readFiles(filesToValidate, {
+        cwd: process.cwd(),
+        maxFileSizeBytes: resolvedOptions.maxFileSizeBytes,
       });
-      if (normalizedMultiModels.length > 0) {
-        throw new Error("--followup cannot be combined with --models.");
-      }
-      const followup = await resolveFollowupReference(options.followup, options.followupModel);
-      resolvedOptions.previousResponseId = followup.responseId;
-      resolvedOptions.followupSessionId = followup.sessionId;
-      resolvedOptions.followupModel = options.followupModel;
     }
+  }
+
+  const browserModelLabelOverride = resolveBrowserModelLabel(cliModelArg, resolvedModel);
+  const browserConfig = await buildBrowserConfig({
+    ...options,
+    model: resolvedModel,
+    browserModelLabel: browserModelLabelOverride,
+  });
+  const getBrowserDeps = (): BrowserSessionRunnerDeps | undefined => {
+    if (!browserConfig || !remoteHost) {
+      return undefined;
+    }
+    console.log(chalk.dim(`Routing browser automation to remote host ${remoteHost}`));
+    return {
+      executeBrowser: createRemoteBrowserExecutor({ host: remoteHost, token: remoteToken }),
+    };
+  };
+
+  if (previewMode) {
     const runOptions = buildRunOptions(resolvedOptions, {
       preview: true,
       previewMode,
-      baseUrl: resolvedBaseUrl,
     });
-    if (engine === "browser") {
+    if (previewMode === "summary") {
+      await runDryRunSummary(
+        {
+          engine,
+          runOptions,
+          cwd: process.cwd(),
+          version: VERSION,
+          log: console.log,
+          browserConfig,
+        },
+        {},
+      );
+    } else {
       await runBrowserPreview(
         {
           runOptions,
@@ -1545,57 +1392,26 @@ async function runRootCommand(options: CliOptions): Promise<void> {
         },
         {},
       );
-      return;
     }
-    // API dry-run/preview path
-    if (previewMode === "summary") {
-      await runDryRunSummary(
-        {
-          engine,
-          runOptions,
-          cwd: process.cwd(),
-          version: VERSION,
-          log: console.log,
-        },
-        {},
-      );
-      return;
-    }
-    await runDryRunSummary(
-      {
-        engine,
-        runOptions,
-        cwd: process.cwd(),
-        version: VERSION,
-        log: console.log,
-      },
-      {},
-    );
     return;
   }
 
-  if (!options.prompt) {
-    throw new Error("Prompt is required when starting a new session.");
-  }
-
-  if (userConfig.promptSuffix) {
-    options.prompt = `${options.prompt.trim()}\n${userConfig.promptSuffix}`;
-  }
-  resolvedOptions.prompt = options.prompt;
-  if (options.followup) {
-    assertFollowupSupported({
-      engine,
-      model: resolvedModel,
-      baseUrl: resolvedBaseUrl,
-      azureEndpoint: resolvedOptions.azure?.endpoint,
+  if (options.dryRun) {
+    assertVisibleDryRun(options, remoteHost);
+    const runOptions = buildRunOptions(resolvedOptions, {
+      preview: false,
+      previewMode: undefined,
     });
-    if (normalizedMultiModels.length > 0) {
-      throw new Error("--followup cannot be combined with --models.");
-    }
-    const followup = await resolveFollowupReference(options.followup, options.followupModel);
-    resolvedOptions.previousResponseId = followup.responseId;
-    resolvedOptions.followupSessionId = followup.sessionId;
-    resolvedOptions.followupModel = options.followupModel;
+    await runBrowserDryRunExecution(
+      {
+        runOptions,
+        browserConfig,
+        cwd: process.cwd(),
+        log: console.log,
+      },
+      getBrowserDeps(),
+    );
+    return;
   }
 
   const duplicateBlocked = await shouldBlockDuplicatePrompt({
@@ -1609,23 +1425,6 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     return;
   }
 
-  if (options.file && options.file.length > 0) {
-    const isBrowserMode = engine === "browser" || userForcedBrowser;
-    const filesToValidate = isBrowserMode
-      ? options.file.filter((f: string) => !isMediaFile(f))
-      : options.file;
-    if (filesToValidate.length > 0) {
-      await readFiles(filesToValidate, {
-        cwd: process.cwd(),
-        maxFileSizeBytes: resolvedOptions.maxFileSizeBytes,
-      });
-    }
-  }
-
-  const getSource = (key: keyof CliOptions) =>
-    program.getOptionValueSource?.(key as string) ?? undefined;
-  applyBrowserDefaultsFromConfig(options, userConfig, getSource);
-
   const notifications = resolveNotificationSettings({
     cliNotify: options.notify,
     cliNotifySound: options.notifySound,
@@ -1633,90 +1432,21 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     config: userConfig.notify,
   });
 
-  const sessionMode: SessionMode = engine === "browser" ? "browser" : "api";
-  const browserModelLabelOverride =
-    sessionMode === "browser" ? resolveBrowserModelLabel(cliModelArg, resolvedModel) : undefined;
-  const browserConfig =
-    sessionMode === "browser"
-      ? await buildBrowserConfig({
-          ...options,
-          model: resolvedModel,
-          browserModelLabel: browserModelLabelOverride,
-        })
-      : undefined;
-
-  let browserDeps: BrowserSessionRunnerDeps | undefined;
-  if (browserConfig && remoteHost) {
-    browserDeps = {
-      executeBrowser: createRemoteBrowserExecutor({ host: remoteHost, token: remoteToken }),
-    };
-    console.log(chalk.dim(`Routing browser automation to remote host ${remoteHost}`));
-  } else if (browserConfig && resolvedModel.startsWith("gemini")) {
-    browserDeps = {
-      executeBrowser: createGeminiWebExecutor({
-        youtube: options.youtube,
-        generateImage: options.generateImage,
-        editImage: options.editImage,
-        outputPath: options.output,
-        aspectRatio: options.aspect,
-        showThoughts: options.geminiShowThoughts,
-      }),
-    };
-    console.log(chalk.dim("Using Gemini web client for browser automation"));
-    if (browserConfig.modelStrategy && browserConfig.modelStrategy !== "select") {
-      console.log(chalk.dim("Browser model strategy is ignored for Gemini web runs."));
-    }
-  }
+  const sessionMode: SessionMode = "browser";
+  const browserDeps = getBrowserDeps();
   const remoteExecutionActive = Boolean(browserDeps);
-
-  if (options.dryRun) {
-    const baseRunOptions = buildRunOptions(resolvedOptions, {
-      preview: false,
-      previewMode: undefined,
-      baseUrl: resolvedBaseUrl,
-    });
-    await runDryRunSummary(
-      {
-        engine,
-        runOptions: baseRunOptions,
-        cwd: process.cwd(),
-        version: VERSION,
-        log: console.log,
-        browserConfig,
-      },
-      {},
-    );
-    return;
-  }
 
   await sessionStore.ensureStorage();
   const baseRunOptions = buildRunOptions(resolvedOptions, {
     preview: false,
     previewMode: undefined,
-    background: resolvedOptions.background ?? userConfig.background,
-    baseUrl: resolvedBaseUrl,
   });
-  enforceBrowserSearchFlag(baseRunOptions, sessionMode, console.log);
-  if (sessionMode === "browser" && baseRunOptions.search === false) {
-    console.log(
-      chalk.dim("Note: search is not available in browser engine; ignoring search=false."),
-    );
-    baseRunOptions.search = undefined;
-  }
   const sessionMeta = await sessionStore.createSession(
     {
       ...baseRunOptions,
       mode: sessionMode,
       browserConfig,
-      followupSessionId: resolvedOptions.followupSessionId,
-      followupModel: resolvedOptions.followupModel,
       waitPreference,
-      youtube: options.youtube,
-      generateImage: options.generateImage,
-      editImage: options.editImage,
-      outputPath: options.output,
-      aspectRatio: options.aspect,
-      geminiShowThoughts: options.geminiShowThoughts,
     },
     process.cwd(),
     notifications,
@@ -1877,9 +1607,12 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
   }
 
   const sessionMode = getSessionMode(metadata);
-  const engine: EngineMode = sessionMode === "browser" ? "browser" : "api";
+  if (sessionMode !== "browser") {
+    throw new Error(browserOnlyEngineMessage(`Stored ${sessionMode} sessions`));
+  }
+  const engine: EngineMode = "browser";
   const browserConfig = getBrowserConfigFromMetadata(metadata);
-  if (sessionMode === "browser" && !browserConfig) {
+  if (!browserConfig) {
     console.error(chalk.red(`Session ${sessionId} is missing browser config; cannot restart.`));
     process.exitCode = 1;
     return;
@@ -1890,10 +1623,7 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
   const storedOptions = metadata.options ?? {};
 
   if (runOptions.file && runOptions.file.length > 0) {
-    const isBrowserMode = engine === "browser";
-    const filesToValidate = isBrowserMode
-      ? runOptions.file.filter((f) => !isMediaFile(f))
-      : runOptions.file;
+    const filesToValidate = runOptions.file.filter((f) => !isMediaFile(f));
     if (filesToValidate.length > 0) {
       await readFiles(filesToValidate, {
         cwd,
@@ -1901,8 +1631,6 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
       });
     }
   }
-
-  enforceBrowserSearchFlag(runOptions, sessionMode, console.log);
 
   let waitPreference = resolveRestartWaitPreference({
     waitFlag: options.wait,
@@ -1919,9 +1647,6 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
   });
   const remoteHost = remoteConfig.host;
   const remoteToken = remoteConfig.token;
-  if (remoteHost && engine !== "browser") {
-    throw new Error("--remote-host requires a browser session.");
-  }
   if (remoteHost) {
     console.log(chalk.dim(`Remote browser host detected: ${remoteHost}`));
   }
@@ -1936,21 +1661,6 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
       executeBrowser: createRemoteBrowserExecutor({ host: remoteHost, token: remoteToken }),
     };
     console.log(chalk.dim(`Routing browser automation to remote host ${remoteHost}`));
-  } else if (browserConfig && runOptions.model.startsWith("gemini")) {
-    browserDeps = {
-      executeBrowser: createGeminiWebExecutor({
-        youtube: storedOptions.youtube,
-        generateImage: storedOptions.generateImage,
-        editImage: storedOptions.editImage,
-        outputPath: storedOptions.outputPath,
-        aspectRatio: storedOptions.aspectRatio,
-        showThoughts: storedOptions.geminiShowThoughts,
-      }),
-    };
-    console.log(chalk.dim("Using Gemini web client for browser automation"));
-    if (browserConfig.modelStrategy && browserConfig.modelStrategy !== "select") {
-      console.log(chalk.dim("Browser model strategy is ignored for Gemini web runs."));
-    }
   }
   const remoteExecutionActive = Boolean(browserDeps);
 
@@ -1965,15 +1675,7 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
       ...runOptions,
       mode: sessionMode,
       browserConfig,
-      followupSessionId: storedOptions.followupSessionId,
-      followupModel: storedOptions.followupModel,
       waitPreference,
-      youtube: storedOptions.youtube,
-      generateImage: storedOptions.generateImage,
-      editImage: storedOptions.editImage,
-      outputPath: storedOptions.outputPath,
-      aspectRatio: storedOptions.aspectRatio,
-      geminiShowThoughts: storedOptions.geminiShowThoughts,
     },
     cwd,
     notifications,
@@ -2050,6 +1752,9 @@ async function executeSession(sessionId: string) {
   }
   const runOptions = buildRunOptionsFromMetadata(metadata);
   const sessionMode = getSessionMode(metadata);
+  if (sessionMode !== "browser") {
+    throw new Error(browserOnlyEngineMessage(`Stored ${sessionMode} sessions`));
+  }
   const browserConfig = getBrowserConfigFromMetadata(metadata);
   const { logLine, writeChunk, stream } = sessionStore.createLogWriter(sessionId);
   const userConfig = (await loadUserConfig()).config;
@@ -2078,13 +1783,6 @@ async function executeSession(sessionId: string) {
 }
 
 function printDebugHelp(cliName: string): void {
-  console.log(chalk.bold("Advanced Options"));
-  printDebugOptionGroup([
-    ["--search <on|off>", "Enable or disable the server-side search tool (default on)."],
-    ["--max-input <tokens>", "Override the input token budget."],
-    ["--max-output <tokens>", "Override the max output tokens (model default otherwise)."],
-  ]);
-  console.log("");
   console.log(chalk.bold("Browser Options"));
   printDebugOptionGroup([
     ["--chatgpt-url <url>", "Override the ChatGPT web URL (workspace/folder targets)."],
@@ -2174,9 +1872,6 @@ function resolveRestartWaitPreference({
 
 function resolveEffectiveModelIdForRun(model: ModelName, stored?: string): string {
   if (stored) return stored;
-  if (model.startsWith("gemini")) {
-    return resolveGeminiModelId(model);
-  }
   return isKnownModel(model) ? (MODEL_CONFIGS[model].apiModel ?? model) : model;
 }
 

@@ -9,9 +9,9 @@ delete envWithKey.ORACLE_ENGINE;
 delete envWithoutKey.ORACLE_ENGINE;
 
 describe("resolveEngine", () => {
-  it("prefers api when no flags and OPENAI_API_KEY is set", () => {
+  it("defaults to browser even when OPENAI_API_KEY is set", () => {
     const engine = resolveEngine({ engine: undefined, browserFlag: false, env: envWithKey });
-    expect(engine).toBe<EngineMode>("api");
+    expect(engine).toBe<EngineMode>("browser");
   });
 
   it("falls back to browser when no flags and no OPENAI_API_KEY", () => {
@@ -52,8 +52,8 @@ describe("defaultWaitPreference", () => {
     expect(defaultWaitPreference("gpt-5.2-pro", "api")).toBe(false);
   });
 
-  it("keeps wait enabled for Codex and browser models", () => {
-    expect(defaultWaitPreference("gpt-5.1-codex", "api")).toBe(true);
+  it("keeps wait enabled for non-pro api and browser models", () => {
+    expect(defaultWaitPreference("gpt-5.2", "api")).toBe(true);
     expect(defaultWaitPreference("gpt-5.2-pro", "browser")).toBe(true);
   });
 });

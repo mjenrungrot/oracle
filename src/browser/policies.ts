@@ -1,4 +1,6 @@
+import path from "node:path";
 import { formatFileSection } from "../oracle/markdown.js";
+import { getOracleHomeDir } from "../oracleHome.js";
 import type { BrowserAttachment } from "./types.js";
 import type { BrowserSessionConfig } from "../sessionManager.js";
 
@@ -57,6 +59,7 @@ export function buildAttachmentPlan(
 
 export type CookiePlan =
   | { type: "inline"; description: string }
+  | { type: "manual"; description: string }
   | { type: "disabled"; description: string }
   | { type: "copy"; description: string };
 
@@ -66,6 +69,16 @@ export function buildCookiePlan(config?: BrowserSessionConfig): CookiePlan {
     return {
       type: "inline",
       description: `Cookies: inline payload (${config.inlineCookies.length}) via ${source}.`,
+    };
+  }
+  const manualProfileDir =
+    config?.manualLoginProfileDir ?? path.join(getOracleHomeDir(), "browser-profile");
+  const usesManualLogin =
+    config?.manualLogin === true || (config?.manualLogin !== false && config?.cookieSync !== true);
+  if (usesManualLogin) {
+    return {
+      type: "manual",
+      description: `Cookies: persistent manual-login profile (${manualProfileDir}).`,
     };
   }
   if (config?.cookieSync === false) {

@@ -1,7 +1,7 @@
 import type { BrowserLogger, ChromeClient } from "../types.js";
 import type { ProviderDomAdapter, ProviderDomFlowContext } from "../providerDomFlow.js";
 import { ensurePromptReady } from "../actions/navigation.js";
-import { submitPrompt } from "../actions/promptComposer.js";
+import { fillPromptComposer, sendPreparedPrompt } from "../actions/promptComposer.js";
 import { waitForAssistantResponse } from "../actions/assistantResponse.js";
 
 interface ChatgptDomProviderState {
@@ -28,13 +28,24 @@ async function waitForUi(ctx: ProviderDomFlowContext): Promise<void> {
   await ensurePromptReady(state.runtime, state.inputTimeoutMs ?? 30_000, state.logger);
 }
 
-async function typePrompt(_ctx: ProviderDomFlowContext): Promise<void> {
-  // submitPrompt() handles typing + send for ChatGPT.
+async function typePrompt(ctx: ProviderDomFlowContext): Promise<void> {
+  const state = requireState(ctx);
+  await fillPromptComposer(
+    {
+      runtime: state.runtime,
+      input: state.input,
+      attachmentNames: state.attachmentNames ?? [],
+      baselineTurns: state.baselineTurns ?? undefined,
+      inputTimeoutMs: state.inputTimeoutMs ?? undefined,
+    },
+    ctx.prompt,
+    state.logger,
+  );
 }
 
 async function submitPromptViaAdapter(ctx: ProviderDomFlowContext): Promise<void> {
   const state = requireState(ctx);
-  const committedTurns = await submitPrompt(
+  const committedTurns = await sendPreparedPrompt(
     {
       runtime: state.runtime,
       input: state.input,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { InvalidArgumentError } from "commander";
 import {
   collectPaths,
+  detectLegacyDryRunMode,
   parseFloatOption,
   parseIntOption,
   parseSearchOption,
@@ -119,6 +120,22 @@ describe("resolvePreviewMode", () => {
   });
 });
 
+describe("detectLegacyDryRunMode", () => {
+  test("detects positional legacy dry-run preview modes", () => {
+    expect(detectLegacyDryRunMode(["--dry-run", "summary", "--prompt", "hello"])).toBe("summary");
+    expect(detectLegacyDryRunMode(["--dry-run", "json"])).toBe("json");
+  });
+
+  test("detects equals-style legacy dry-run preview modes", () => {
+    expect(detectLegacyDryRunMode(["--dry-run=full", "--prompt", "hello"])).toBe("full");
+  });
+
+  test("ignores bare dry-run and unrelated positional prompts", () => {
+    expect(detectLegacyDryRunMode(["--dry-run", "hello world"])).toBeUndefined();
+    expect(detectLegacyDryRunMode(["--preview", "summary"])).toBeUndefined();
+  });
+});
+
 describe("parseHeartbeatOption", () => {
   test("parses numeric values and defaults to 30 when omitted", () => {
     expect(parseHeartbeatOption("45")).toBe(45);
@@ -166,39 +183,18 @@ describe("resolveApiModel", () => {
     expect(resolveApiModel("GPT-5.0-PRO")).toBe("gpt-5-pro");
     expect(resolveApiModel("gpt-5-pro")).toBe("gpt-5-pro");
     expect(resolveApiModel("GPT-5.1")).toBe("gpt-5.1");
-    expect(resolveApiModel("GPT-5.1-CODEX")).toBe("gpt-5.1-codex");
-    expect(resolveApiModel("claude-4.5-sonnet")).toBe("claude-4.5-sonnet");
-    expect(resolveApiModel("Claude Opus 4.1")).toBe("claude-4.1-opus");
-    expect(resolveApiModel("sonnet")).toBe("claude-4.5-sonnet");
-    expect(resolveApiModel("opus")).toBe("claude-4.1-opus");
-    expect(resolveApiModel("CLAUDE")).toBe("claude-4.5-sonnet");
-    expect(resolveApiModel("Gemini")).toBe("gemini-3-pro");
-    expect(resolveApiModel("gemini-3.1-pro")).toBe("gemini-3.1-pro");
-    expect(resolveApiModel("Gemini 3.1 Pro")).toBe("gemini-3.1-pro");
-    expect(resolveApiModel("grok")).toBe("grok-4.1");
-    expect(resolveApiModel("Grok 4.1")).toBe("grok-4.1");
+    expect(resolveApiModel("GPT-5.2 Thinking")).toBe("gpt-5.2-thinking");
+    expect(resolveApiModel("GPT-5.2 Instant")).toBe("gpt-5.2-instant");
   });
 
-  test("rejects codex max until API is available", () => {
-    expect(() => resolveApiModel("gpt-5.1-codex-max")).toThrow(
-      "gpt-5.1-codex-max is not available yet",
+  test("rejects deprecated non-ChatGPT providers and models", () => {
+    expect(() => resolveApiModel("gpt-5.1-codex")).toThrow(/Only ChatGPT\/GPT browser models/);
+    expect(() => resolveApiModel("gemini-3-pro")).toThrow(/Only ChatGPT\/GPT browser models/);
+    expect(() => resolveApiModel("claude-4.5-sonnet")).toThrow(
+      /Only ChatGPT\/GPT browser models/,
     );
-  });
-
-  test("rejects Gemini deep-think aliases in API mode", () => {
-    expect(() => resolveApiModel("gemini-3-deep-think")).toThrow(
-      "Gemini Deep Think is browser-only today",
-    );
-    expect(() => resolveApiModel("Gemini Deep Think")).toThrow(
-      "Gemini Deep Think is browser-only today",
-    );
-  });
-
-  test("passes through unknown names (OpenRouter/custom)", () => {
-    expect(resolveApiModel("instant")).toBe("instant");
-    expect(resolveApiModel("openai/gpt-5.4")).toBe("openai/gpt-5.4");
-    expect(resolveApiModel("anthropic/claude-sonnet-4.5")).toBe("anthropic/claude-sonnet-4.5");
-    expect(resolveApiModel("google/gemini-2.5-pro")).toBe("google/gemini-2.5-pro");
+    expect(() => resolveApiModel("grok-4.1")).toThrow(/Only ChatGPT\/GPT browser models/);
+    expect(() => resolveApiModel("openai/gpt-5.4")).toThrow(/Only ChatGPT\/GPT browser models/);
   });
 });
 
@@ -209,13 +205,6 @@ describe("inferModelFromLabel", () => {
     expect(inferModelFromLabel("gpt-5.2-pro")).toBe("gpt-5.2-pro");
     expect(inferModelFromLabel("gpt-5-pro")).toBe("gpt-5-pro");
     expect(inferModelFromLabel("gpt-5.1")).toBe("gpt-5.1");
-    expect(inferModelFromLabel("gpt-5.1-codex")).toBe("gpt-5.1-codex");
-    expect(inferModelFromLabel("gemini-3.1-pro")).toBe("gemini-3.1-pro");
-  });
-
-  test("preserves provider-qualified ids instead of remapping them to built-ins", () => {
-    expect(inferModelFromLabel("openai/gpt-5.4")).toBe("openai/gpt-5.4");
-    expect(inferModelFromLabel("anthropic/claude-sonnet-4.5")).toBe("anthropic/claude-sonnet-4.5");
   });
 
   test("infers 5.4 variants", () => {
@@ -236,30 +225,24 @@ describe("inferModelFromLabel", () => {
     expect(inferModelFromLabel("5_2 FAST")).toBe("gpt-5.2-instant");
   });
 
-  test("preserves Gemini 3.1 labels", () => {
-    expect(inferModelFromLabel("Gemini 3.1 Pro")).toBe("gemini-3.1-pro");
-  });
-
-  test("infers Codex labels", () => {
-    expect(inferModelFromLabel("ChatGPT Codex")).toBe("gpt-5.1-codex");
-    expect(inferModelFromLabel("Codex Max Studio")).toBe("gpt-5.1-codex");
-  });
-
   test("falls back to pro when the label references pro", () => {
     expect(inferModelFromLabel("ChatGPT Pro")).toBe("gpt-5.4-pro");
     expect(inferModelFromLabel("GPT-5.2 Pro")).toBe("gpt-5.2-pro");
     expect(inferModelFromLabel("GPT-5 Pro (Classic)")).toBe("gpt-5-pro");
   });
 
-  test("infers Claude family labels", () => {
-    expect(inferModelFromLabel("Claude Sonnet 4.5")).toBe("claude-4.5-sonnet");
-    expect(inferModelFromLabel("Claude Opus 4.1")).toBe("claude-4.1-opus");
-  });
-
-  test("infers Grok aliases", () => {
-    expect(inferModelFromLabel("grok")).toBe("grok-4.1");
-    expect(inferModelFromLabel("Grok 4.1")).toBe("grok-4.1");
-    expect(inferModelFromLabel("Grok-4-1")).toBe("grok-4.1");
+  test("rejects deprecated non-ChatGPT providers and models", () => {
+    expect(() => inferModelFromLabel("ChatGPT Codex")).toThrow(/Only ChatGPT\/GPT browser models/);
+    expect(() => inferModelFromLabel("Gemini 3.1 Pro")).toThrow(
+      /Only ChatGPT\/GPT browser models/,
+    );
+    expect(() => inferModelFromLabel("Claude Sonnet 4.5")).toThrow(
+      /Only ChatGPT\/GPT browser models/,
+    );
+    expect(() => inferModelFromLabel("Grok 4.1")).toThrow(/Only ChatGPT\/GPT browser models/);
+    expect(() => inferModelFromLabel("openai/gpt-5.4")).toThrow(
+      /Only ChatGPT\/GPT browser models/,
+    );
   });
 
   test("falls back to gpt-5.4-pro when label empty and to gpt-5.2 for other ambiguous strings", () => {

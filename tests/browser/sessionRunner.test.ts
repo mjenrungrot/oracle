@@ -1,7 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 import type { RunOracleOptions } from "../../src/oracle.js";
 import type { BrowserSessionConfig } from "../../src/sessionStore.js";
-import { runBrowserSessionExecution } from "../../src/browser/sessionRunner.js";
+import {
+  runBrowserDryRunExecution,
+  runBrowserSessionExecution,
+} from "../../src/browser/sessionRunner.js";
 
 const baseRunOptions: RunOracleOptions = {
   prompt: "Hello world",
@@ -378,5 +381,63 @@ describe("runBrowserSessionExecution", () => {
     );
     expect(result.answerText).toBe("gemini response");
     expect(executeBrowser).toHaveBeenCalled();
+  });
+});
+
+describe("runBrowserDryRunExecution", () => {
+  test("passes prepareOnly and fallback submission through to browser runner", async () => {
+    const log = vi.fn();
+    const executeBrowser = vi.fn(async () => ({
+      answerText: "",
+      answerMarkdown: "",
+      tookMs: 25,
+      answerTokens: 0,
+      answerChars: 0,
+      chromePort: 9222,
+      chromeHost: "127.0.0.1",
+      tabUrl: "https://chatgpt.com/",
+    }));
+
+    const result = await runBrowserDryRunExecution(
+      {
+        runOptions: { ...baseRunOptions, verbose: false },
+        browserConfig: baseConfig,
+        cwd: "/repo",
+        log,
+      },
+      {
+        assemblePrompt: async () => ({
+          markdown: "prompt",
+          composerText: "prompt",
+          estimatedInputTokens: 5,
+          attachments: [{ path: "/repo/a.txt", displayPath: "a.txt", sizeBytes: 1 }],
+          inlineFileCount: 0,
+          tokenEstimateIncludesInlineFiles: false,
+          attachmentsPolicy: "auto",
+          attachmentMode: "upload",
+          fallback: {
+            composerText: "fallback prompt",
+            attachments: [{ path: "/repo/b.txt", displayPath: "b.txt", sizeBytes: 2 }],
+            bundled: null,
+          },
+        }),
+        executeBrowser,
+      },
+    );
+
+    expect(executeBrowser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prepareOnly: true,
+        prompt: "prompt",
+        attachments: [expect.objectContaining({ path: "/repo/a.txt" })],
+        fallbackSubmission: {
+          prompt: "fallback prompt",
+          attachments: [expect.objectContaining({ path: "/repo/b.txt" })],
+        },
+      }),
+    );
+    expect(result.runtime).toMatchObject({ chromePort: 9222, chromeHost: "127.0.0.1" });
+    expect(log.mock.calls.some((call) => String(call[0]).includes("Nothing was sent"))).toBe(true);
+    expect(log.mock.calls.some((call) => String(call[0]).includes("Answer:"))).toBe(false);
   });
 });

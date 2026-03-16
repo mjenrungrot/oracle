@@ -20,7 +20,7 @@ describe("runDryRunSummary", () => {
     );
 
     expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("[dry-run] Oracle (0.4.1) would call gpt-5.2-pro"),
+      expect.stringContaining("[preview] Oracle (0.4.1) would call gpt-5.2-pro"),
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("No files matched"));
   });
@@ -84,7 +84,7 @@ describe("runDryRunSummary", () => {
         cwd: "/repo",
         version: "0.4.1",
         log,
-        browserConfig: { cookieSync: false },
+        browserConfig: { manualLogin: false, cookieSync: false },
       },
       { assembleBrowserPromptImpl },
     );
@@ -94,7 +94,7 @@ describe("runDryRunSummary", () => {
     expect(joined).toContain("cookie-sync");
   });
 
-  test("browser dry run shows default cookie copy when none provided and no files attached", async () => {
+  test("browser dry run shows the default manual-login profile when none provided and no files attached", async () => {
     const log = vi.fn();
     const assembleBrowserPromptImpl = vi.fn().mockResolvedValue({
       markdown: "[SYSTEM]\n[USER]",
@@ -122,7 +122,7 @@ describe("runDryRunSummary", () => {
     );
 
     const joined = log.mock.calls.flat().join("\n");
-    expect(joined).toContain("Cookies: copy from Chrome (all from Chrome profile)");
+    expect(joined).toContain("Cookies: persistent manual-login profile");
     expect(joined).toContain("No files attached");
   });
 

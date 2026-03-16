@@ -21,17 +21,19 @@ const ENTER_KEY_EVENT = {
 } as const;
 const ENTER_KEY_TEXT = "\r";
 
-export async function submitPrompt(
-  deps: {
-    runtime: ChromeClient["Runtime"];
-    input: ChromeClient["Input"];
-    attachmentNames?: string[];
-    baselineTurns?: number | null;
-    inputTimeoutMs?: number | null;
-  },
+interface PromptComposerDeps {
+  runtime: ChromeClient["Runtime"];
+  input: ChromeClient["Input"];
+  attachmentNames?: string[];
+  baselineTurns?: number | null;
+  inputTimeoutMs?: number | null;
+}
+
+export async function fillPromptComposer(
+  deps: PromptComposerDeps,
   prompt: string,
   logger: BrowserLogger,
-): Promise<number | null> {
+): Promise<void> {
   const { runtime, input } = deps;
 
   await waitForDomReady(runtime, logger, deps.inputTimeoutMs ?? undefined);
@@ -200,7 +202,14 @@ export async function submitPrompt(
       },
     );
   }
+}
 
+export async function sendPreparedPrompt(
+  deps: PromptComposerDeps,
+  prompt: string,
+  logger: BrowserLogger,
+): Promise<number | null> {
+  const { runtime, input } = deps;
   const clicked = await attemptSendButton(runtime, logger, deps?.attachmentNames);
   if (!clicked) {
     await input.dispatchKeyEvent({
@@ -227,6 +236,15 @@ export async function submitPrompt(
     logger,
     deps.baselineTurns ?? undefined,
   );
+}
+
+export async function submitPrompt(
+  deps: PromptComposerDeps,
+  prompt: string,
+  logger: BrowserLogger,
+): Promise<number | null> {
+  await fillPromptComposer(deps, prompt, logger);
+  return sendPreparedPrompt(deps, prompt, logger);
 }
 
 export async function clearPromptComposer(Runtime: ChromeClient["Runtime"], logger: BrowserLogger) {

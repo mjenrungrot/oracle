@@ -33,11 +33,22 @@ describe("remote browser service", () => {
 
       const runLog: string[] = [];
       const server = await createRemoteServer(
-        { host: "127.0.0.1", port: 0, token: "secret", logger: () => {} },
+        {
+          host: "127.0.0.1",
+          port: 0,
+          token: "secret",
+          logger: () => {},
+          manualLoginDefault: true,
+          manualLoginProfileDir: "/tmp/oracle-browser-profile",
+        },
         {
           runBrowser: async (options) => {
             runLog.push(options.prompt);
             expect(options.attachments).toHaveLength(1);
+            expect(options.config.manualLogin).toBe(true);
+            expect(options.config.manualLoginProfileDir).toBe("/tmp/oracle-browser-profile");
+            expect(options.config.cookieSync).toBe(false);
+            expect(options.config.keepBrowser).toBe(true);
             const attachment = options.attachments?.[0];
             if (!attachment) {
               throw new Error("missing attachment");
@@ -65,7 +76,7 @@ describe("remote browser service", () => {
       const result = await executor({
         prompt: "remote",
         attachments: [{ path: attachmentPath, displayPath: "note.txt", sizeBytes: 11 }],
-        config: {},
+        config: { manualLogin: false, cookieSync: true, keepBrowser: false },
         log: (message?: string) => {
           if (message) clientLogs.push(message);
         },
