@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { Command, Option } from "commander";
@@ -244,6 +246,17 @@ program.hook("preAction", (thisCommand) => {
     opts.prompt = positional;
     thisCommand.setOptionValue("prompt", positional);
   }
+  if (opts.prompt) {
+    const resolved = path.isAbsolute(opts.prompt) ? opts.prompt : path.resolve(opts.prompt);
+    try {
+      if (existsSync(resolved) && statSync(resolved).isFile()) {
+        opts.prompt = readFileSync(resolved, "utf8");
+        thisCommand.setOptionValue("prompt", opts.prompt);
+      }
+    } catch {
+      // not a file; keep original prompt text
+    }
+  }
   if (shouldRequirePrompt(userCliArgs, opts)) {
     console.log(
       chalk.yellow('Prompt is required. Provide it via --prompt "<text>" or positional [prompt].'),
@@ -260,7 +273,7 @@ program
   )
   .version(VERSION)
   .argument("[prompt]", "Prompt text (shorthand for --prompt).")
-  .option("-p, --prompt <text>", "User prompt to send to the model.")
+  .option("-p, --prompt <text|file>", "User prompt text, or path to a file containing the prompt.")
   .addOption(new Option("--message <text>", "Alias for --prompt.").hideHelp())
   .option(
     "--followup <sessionId|responseId>",

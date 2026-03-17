@@ -1,49 +1,76 @@
 ---
 name: oracle
-description: Use your Oracle CLI command to bundle a prompt plus the right files and get a second-model review (API or browser) for debugging, refactors, design checks, or cross-validation.
+description: Use your Oracle CLI command to bundle a prompt plus the right files and get a browser-only ChatGPT second-model review for debugging, refactors, design checks, or cross-validation.
 ---
 
 # Oracle (CLI) — best use
 
-Oracle bundles your prompt + selected files into one “one-shot” request so another model can answer with real repo context (API or browser automation). Treat outputs as advisory: verify against the codebase + tests.
+Oracle bundles your prompt + selected files into one "one-shot" request, opens ChatGPT in a browser, and submits it to GPT-5.4 Pro. Browser-only. Treat outputs as advisory: verify against the codebase + tests.
 
-Replace `<your-oracle-command>` below with the entrypoint for your setup. For this repo, that is usually `pnpm run oracle --`; for a published fork, it may be `npx -y <your-oracle-package>`.
+## Command
 
-## Main use case (browser, GPT‑5.4 Pro)
+```
+pnpm run oracle -- [options] [prompt]
+```
 
-Default workflow here: `--engine browser` with GPT‑5.4 Pro in ChatGPT. This is the “human in the loop” path: it can take ~10 minutes to ~1 hour; expect a stored session you can reattach to.
+All examples below use this invocation.
 
-Recommended defaults:
+For long prompts, pass a file path to `-p`:
 
-- Engine: browser (`--engine browser`)
-- Model: GPT‑5.4 Pro (either `--model gpt-5.4-pro` or a ChatGPT picker label like `--model "5.4 Pro"`)
-- Attachments: directories/globs + excludes; avoid secrets.
+```bash
+pnpm run oracle -- -p prompt.md --file "src/**"
+```
 
-## Golden path (fast + reliable)
+## Workflow
 
-1. Pick a tight file set (fewest files that still contain the truth).
-2. Preview what you’re about to send (`--dry-run` + `--files-report` when needed).
-3. Run in browser mode for the usual GPT‑5.4 Pro ChatGPT workflow; use API only when you explicitly want it.
-4. If the run detaches/timeouts: reattach to the stored session (don’t re-run).
+### Step 1: Preview locally (no browser, no model call)
 
-## Commands (preferred)
+Use `--preview` to inspect what you're about to send without opening a browser:
 
-- Show help (once/session):
-  - `<your-oracle-command> --help`
+```bash
+pnpm run oracle -- --preview summary -p "<task>" --file "src/**" --files-report
+pnpm run oracle -- --preview json -p "<task>" --file "src/**"
+pnpm run oracle -- --preview full -p "<task>" --file "src/**"
+```
 
-- Preview (no tokens):
-  - `<your-oracle-command> --dry-run summary -p "<task>" --file "src/**" --file "!**/*.test.*"`
-  - `<your-oracle-command> --dry-run full -p "<task>" --file "src/**"`
+`--preview` accepts `summary` (default), `json`, or `full`. Combine with `--files-report` to spot token hogs.
 
-- Token/cost sanity:
-  - `<your-oracle-command> --dry-run summary --files-report -p "<task>" --file "src/**"`
+### Step 2 (optional): Dry run — review before submit
 
-- Browser run (main path; long-running is normal):
-  - `<your-oracle-command> --engine browser --model gpt-5.4-pro -p "<task>" --file "src/**"`
+`--dry-run` opens ChatGPT in the browser and fills the composer with your bundled prompt + files, but **stops before sending**. This lets the user review exactly what will be submitted.
 
-- Manual paste fallback (assemble bundle, copy to clipboard):
-  - `<your-oracle-command> --render --copy -p "<task>" --file "src/**"`
-  - Note: `--copy` is a hidden alias for `--copy-markdown`.
+```bash
+pnpm run oracle -- --dry-run -p "<task>" --file "src/**" --file "!**/*.test.*"
+```
+
+### Step 3: Full run
+
+Remove `--dry-run` to submit. Long-running is normal (GPT-5.4 Pro often takes ~10 minutes to ~1 hour).
+
+```bash
+pnpm run oracle -- -p "<task>" --file "src/**" --file "!src/**/*.test.ts"
+```
+
+Optionally specify a model: `--model gpt-5.4-pro` (default) or a ChatGPT picker label like `--model "5.4 Pro"`.
+
+> **Suppress the browser window:** Add `--browser-hide-window` to hide Chrome after launch (macOS, recommended) or `--browser-headless` for true headless mode (may trigger CAPTCHAs). Both can be set as defaults in `~/.oracle/config.json`.
+
+### Step 4: If timeout/detach — reattach, never re-run
+
+If the CLI times out or detaches, **do not re-run**. Reattach to the stored session:
+
+```bash
+oracle status --hours 72
+oracle session <id> --render
+```
+
+## Manual paste fallback
+
+Build the bundle, print it, and copy to clipboard for manual paste into ChatGPT:
+
+```bash
+pnpm run oracle -- --render --copy-markdown -p "<task>" --file "src/**"
+```
 
 ## Attaching files (`--file`)
 
@@ -57,60 +84,54 @@ Recommended defaults:
 - Exclude (prefix with `!`):
   - `--file "src/**" --file "!src/**/*.test.ts" --file "!**/*.snap"`
 
-- Defaults (important behavior from the implementation):
-  - Default-ignored dirs: `node_modules`, `dist`, `coverage`, `.git`, `.turbo`, `.next`, `build`, `tmp` (skipped unless you explicitly pass them as literal dirs/files).
+- Defaults:
+  - Default-ignored dirs: `node_modules`, `dist`, `coverage`, `.git`, `.turbo`, `.next`, `build`, `tmp` (skipped unless explicitly passed).
   - Honors `.gitignore` when expanding globs.
-  - Does not follow symlinks (glob expansion uses `followSymbolicLinks: false`).
-  - Dotfiles are filtered unless you explicitly opt in with a pattern that includes a dot-segment (e.g. `--file ".github/**"`).
+  - Does not follow symlinks.
+  - Dotfiles are filtered unless you opt in (e.g. `--file ".github/**"`).
   - Default cap: files > 1 MB are rejected unless you raise `ORACLE_MAX_FILE_SIZE_BYTES` or `maxFileSizeBytes` in `~/.oracle/config.json`.
 
 ## Budget + observability
 
 - Target: keep total input under ~196k tokens.
-- Use `--files-report` (and/or `--dry-run json`) to spot the token hogs before spending.
-- If you need hidden/advanced knobs: `<your-oracle-command> --help --verbose`.
+- Use `--files-report` and/or `--preview json` to spot token hogs before spending.
+- Hidden/advanced knobs: `pnpm run oracle -- --help --verbose`.
 
-## Engines (API vs browser)
-
-- Auto-pick: uses `api` when `OPENAI_API_KEY` is set, otherwise `browser`.
-- Browser engine supports GPT + Gemini only; use `--engine api` for Claude/Grok/Codex or multi-model runs.
-- **API runs require explicit user consent** before starting because they incur usage costs.
-- Browser attachments:
-  - `--browser-attachments auto|never|always` (auto pastes inline up to ~60k chars then uploads).
-- Remote browser host (signed-in machine runs automation):
-  - Host: `oracle serve --host 0.0.0.0 --port 9473 --token <secret>`
-  - Client: `oracle --engine browser --remote-host <host:port> --remote-token <secret> -p "<task>" --file "src/**"`
-
-## Sessions + slugs (don’t lose work)
+## Sessions + slugs (don't lose work)
 
 - Stored under `~/.oracle/sessions` (override with `ORACLE_HOME_DIR`).
-- Runs may detach or take a long time (browser + GPT‑5.4 Pro often does). If the CLI times out: don’t re-run; reattach.
+- Runs may detach or take a long time. If the CLI times out: don't re-run; reattach.
   - List: `oracle status --hours 72`
   - Attach: `oracle session <id> --render`
+  - Interactive: `oracle tui` for a terminal UI.
 - Use `--slug "<3-5 words>"` to keep session IDs readable.
 - Duplicate prompt guard exists; use `--force` only when you truly want a fresh run.
 
-## Prompt template (high signal)
+## Prompt rules (high signal)
 
-Oracle starts with **zero** project knowledge. Assume the model cannot infer your stack, build tooling, conventions, or “obvious” paths. Include:
+Oracle starts with **zero** project knowledge. Always include:
 
-- Project briefing (stack + build/test commands + platform constraints).
-- “Where things live” (key directories, entrypoints, config files, dependency boundaries).
-- Exact question + what you tried + the error text (verbatim).
-- Constraints (“don’t change X”, “must keep public API”, “perf budget”, etc).
-- Desired output (“return patch plan + tests”, “list risky assumptions”, “give 3 options with tradeoffs”).
+1. **Project briefing**: stack, build/test commands, platform constraints.
+2. **Where things live**: key directories, entrypoints, config files, dependency boundaries.
+3. **Exact question**: what you tried + the error text (verbatim).
+4. **Constraints**: "don't change X", "must keep public API", "perf budget", etc.
+5. **Desired output**: "return patch plan + tests", "list risky assumptions", "give 3 options with tradeoffs".
 
-### “Exhaustive prompt” pattern (for later restoration)
+### Exhaustive prompt pattern (long investigations)
 
-When you know this will be a long investigation, write a prompt that can stand alone later:
+When this will be a long investigation, write a prompt that can stand alone:
 
-- Top: 6–30 sentence project briefing + current goal.
+- Top: 6-30 sentence project briefing + current goal.
 - Middle: concrete repro steps + exact errors + what you already tried.
 - Bottom: attach _all_ context files needed so a fresh model can fully understand (entrypoints, configs, key modules, docs).
 
-If you need to reproduce the same context later, re-run with the same prompt + `--file …` set (Oracle runs are one-shot; the model doesn’t remember prior runs).
+Oracle runs are one-shot; the model doesn't remember prior runs. To reproduce context later, re-run with the same prompt + `--file` set.
+
+## Troubleshooting: `ECONNREFUSED` or browser failures
+
+If Oracle fails with `connect ECONNREFUSED` or other browser errors, **quit Chrome completely and retry**. Oracle launches Chrome with special DevTools Protocol (CDP) flags to control it programmatically. If Chrome is already running, the OS reuses the existing process which doesn't have those flags — so Oracle can't connect to it. Closing Chrome lets Oracle launch a fresh instance with the correct CDP configuration.
 
 ## Safety
 
-- Don’t attach secrets by default (`.env`, key files, auth tokens). Redact aggressively; share only what’s required.
-- Prefer “just enough context”: fewer files + better prompt beats whole-repo dumps.
+- Don't attach secrets by default (`.env`, key files, auth tokens). Redact aggressively; share only what's required.
+- Prefer "just enough context": fewer files + better prompt beats whole-repo dumps.
