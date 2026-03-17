@@ -81,7 +81,7 @@ Confirm the remote host executes the browser automation and the local client rec
 Do not use the old manual checks for:
 
 - MCP
-- API mode
+- direct OpenAI / Azure endpoints
 - Gemini browser mode
-- provider-specific API integrations
+- non-ChatGPT provider integrations
 - multi-model fan-out

@@ -132,7 +132,7 @@ function buildMessage(payload: NotificationContent, answerPreview?: string): str
   const sessionLabel = payload.sessionName || payload.sessionId;
   parts.push(sessionLabel);
 
-  // Show cost only for API runs.
+  // Show cost only for legacy engine runs where token pricing is known.
   if (payload.mode === "api") {
     const cost = payload.costUsd ?? inferCost(payload);
     if (cost !== undefined) {

@@ -2,7 +2,7 @@
 
 Oracle reads an optional per-user config from `~/.oracle/config.json`. The file uses JSON5 parsing, so comments and trailing commas are allowed.
 
-This fork is browser-only. API/MCP/provider settings are deprecated and ignored or rejected depending on whether they actively request removed behavior.
+This fork is browser-only. Legacy provider settings are deprecated and ignored or rejected depending on whether they actively request removed behavior.
 
 ## Example
 

@@ -3,7 +3,7 @@ import { isProModel } from "../oracle/modelResolver.js";
 export type EngineMode = "api" | "browser";
 
 export function defaultWaitPreference(model: string, engine: EngineMode): boolean {
-  // Pro-class API runs can take a long time; prefer non-blocking unless explicitly overridden.
+  // Pro-class legacy-engine runs can take a long time; prefer non-blocking unless explicitly overridden.
   if (engine === "api" && isProModel(model)) {
     return false;
   }

@@ -277,7 +277,7 @@ program
   .addOption(new Option("--message <text>", "Alias for --prompt.").hideHelp())
   .option(
     "--followup <sessionId|responseId>",
-    "Deprecated. Follow-up API chaining is no longer supported in the local repository.",
+    "Deprecated. Follow-up chaining is no longer supported in the local repository.",
   )
   .option(
     "--followup-model <model>",
@@ -329,7 +329,7 @@ program
   .addOption(
     new Option(
       "--models <models>",
-      "Deprecated. Multi-model fan-out is no longer supported locally.",
+      "Deprecated. Multi-model fan-out is no longer supported.",
     )
       .argParser(collectModelList)
       .default([]),
@@ -337,7 +337,7 @@ program
   .addOption(
     new Option(
       "-e, --engine <mode>",
-      "Execution engine (api | browser). Local oracle supports browser mode only; api remains as a deprecated compatibility flag that exits with guidance.",
+      "Execution engine (browser only). The 'api' value is accepted but exits with deprecation guidance.",
     ).choices(["api", "browser"]),
   )
   .addOption(
@@ -375,15 +375,15 @@ program
   .addOption(
     new Option(
       "--background",
-      "Deprecated. Background API mode is no longer supported locally.",
+      "Deprecated. Background mode is no longer supported.",
     ).default(undefined),
   )
   .addOption(
-    new Option("--no-background", "Deprecated. Background API mode is no longer supported.")
+    new Option("--no-background", "Deprecated. Background mode is no longer supported.")
       .default(undefined),
   )
   .addOption(
-    new Option("--http-timeout <ms|s|m|h>", "Deprecated. API transport timeouts are no longer supported locally.")
+    new Option("--http-timeout <ms|s|m|h>", "Deprecated. Transport timeouts are no longer supported.")
       .argParser((value) => parseDurationOption(value, "HTTP timeout"))
       .default(undefined),
   )
@@ -449,7 +449,7 @@ program
   )
   .option(
     "--base-url <url>",
-    "Deprecated. Custom API base URLs are no longer supported locally.",
+    "Deprecated. Custom base URLs are no longer supported.",
   )
   .option(
     "--azure-endpoint <url>",

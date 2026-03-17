@@ -35,6 +35,6 @@ export function collectDeprecatedConfigWarnings(userConfig: UserConfig): string[
   }
 
   return [
-    `Ignoring deprecated config keys in oracle config: ${deprecatedKeys.join(", ")}. The local repository no longer supports API/MCP provider settings.`,
+    `Ignoring deprecated config keys in oracle config: ${deprecatedKeys.join(", ")}. The local repository no longer supports these provider settings.`,
   ];
 }

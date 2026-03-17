@@ -6,7 +6,7 @@ Oracle can raise a desktop notification when a session finishes so you don’t h
 
 - **Default:** on, except when `CI` or `SSH_CONNECTION` is set (those environments suppress notifications). The notification still fires when there is no TTY.
 - **Scope:** fires on successful completion only (errors keep quiet).
-- **Content:** `Oracle🧿 finished – session <slug> · $<cost> · <chars> chars`. Cost only shows for API runs where token pricing is known. Character count uses the returned answer text length.
+- **Content:** `Oracle🧿 finished – session <slug> · <chars> chars`. Character count uses the returned answer text length.
 - **Sound:** off by default. Enable with `--notify-sound` or `ORACLE_NOTIFY_SOUND=1`.
 
 ## CLI flags / env

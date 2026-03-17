@@ -16,8 +16,7 @@ Oracle is now a browser-only ChatGPT CLI in this fork. It bundles your prompt an
 This repository no longer supports:
 
 - MCP / `oracle-mcp`
-- API mode
-- Azure / custom API base URLs
+- direct OpenAI / Azure endpoints
 - multi-model fan-out
 - Gemini, Claude, Grok, OpenRouter, or custom provider models
 

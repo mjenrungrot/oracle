@@ -5,7 +5,7 @@ description: Use your Oracle CLI command to bundle a prompt plus the right files
 
 # Oracle (CLI) — best use
 
-Oracle bundles your prompt + selected files into one "one-shot" request, opens ChatGPT in a browser, and submits it to GPT-5.4 Pro (the default model). This is a browser-only workflow — API mode is deprecated and exits with guidance. Treat outputs as advisory: verify against the codebase + tests.
+Oracle bundles your prompt + selected files into one "one-shot" request, opens ChatGPT in a browser, and submits it to GPT-5.4 Pro (the default model). Browser-only. Treat outputs as advisory: verify against the codebase + tests.
 
 ## Command
 
@@ -28,12 +28,12 @@ pnpm run oracle -- -p prompt.md --file "src/**"
 Use `--preview` to render the assembled request and token/file summary without submitting:
 
 ```bash
-pnpm run oracle -- --preview summary -p "<task>" --file "src/**" --files-report
+pnpm run oracle -- --preview summary -p "<task>" --file "src/**"
 pnpm run oracle -- --preview json -p "<task>" --file "src/**"
 pnpm run oracle -- --preview full -p "<task>" --file "src/**"
 ```
 
-`--preview` accepts `summary` (default), `json`, or `full`. Combine with `--files-report` to spot token hogs.
+`--preview` accepts `summary` (default), `json`, or `full`.
 
 > **Legacy compat:** `--dry-run summary|json|full` still works as an alias for `--preview`, but prefer `--preview` for new usage.
 
@@ -98,7 +98,7 @@ Note: `--copy` is a hidden alias for `--copy-markdown`.
 ## Budget + observability
 
 - Target: keep total input under ~196k tokens.
-- Use `--files-report` and/or `--preview json` to spot token hogs before spending.
+- `--files-report` prints per-file token usage during full runs and auto-prints when files exceed the token budget. Use `--preview json` for local token inspection without launching a browser.
 - Hidden/advanced knobs: `pnpm run oracle -- --help --verbose`.
 
 ## Sessions + slugs (don't lose work)

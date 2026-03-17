@@ -76,13 +76,13 @@ function renderHelpFooter(program: Command, colors: HelpColors): string {
     `${colors.bullet("•")} Spell out the project + platform + version requirements (repo name, target OS/toolchain versions, API dependencies) so Oracle doesn’t guess defaults.`,
     `${colors.bullet("•")} When comparing multiple repos/files, spell out each repo + path + role (e.g., “Project A SettingsView → apps/project-a/Sources/SettingsView.swift; Project B SettingsView → ../project-b/mac/...”) so the model knows exactly which file is which.`,
     `${colors.bullet("•")} Best results: 6–30 sentences plus key source files; very short prompts often yield generic answers.`,
-    `${colors.bullet("•")} Oracle is one-shot by default. For OpenAI/Azure API runs, you can chain follow-ups by passing ${colors.accent("--followup <sessionId|responseId>")} (continues via Responses API previous_response_id).`,
-    `${colors.bullet("•")} Run ${colors.accent("--files-report")} to inspect token spend before hitting the API.`,
-    `${colors.bullet("•")} Non-preview runs spawn detached sessions (especially gpt-5.4-pro API). If the CLI times out, do not re-run — reattach with ${colors.accent("oracle session <slug>")} to resume/inspect the existing run.`,
+    `${colors.bullet("•")} Oracle is one-shot by default; the model doesn't remember prior runs.`,
+    `${colors.bullet("•")} Run ${colors.accent("--files-report")} to inspect token spend per attached file.`,
+    `${colors.bullet("•")} Non-preview runs spawn detached sessions (especially gpt-5.4-pro). If the CLI times out, do not re-run — reattach with ${colors.accent("oracle session <slug>")} to resume/inspect the existing run.`,
     `${colors.bullet("•")} Set a memorable 3–5 word slug via ${colors.accent('--slug "<words>"')} to keep session IDs tidy.`,
     `${colors.bullet("•")} Finished sessions auto-hide preamble logs when reattached; raw timestamps remain in the saved log file.`,
     `${colors.bullet("•")} Need hidden flags? Run ${colors.accent(`${program.name()} --help --verbose`)} to list search/token/browser overrides.`,
-    `${colors.bullet("•")} If any Oracle session is already running, do not start new API runs. Attach to the existing browser session instead; only trigger API calls when you explicitly mean to.`,
+    `${colors.bullet("•")} If any Oracle session is already running, attach to the existing session instead of spawning a new one.`,
     `${colors.bullet("•")} Duplicate prompt guard: if the same prompt is already running, new runs are blocked unless you pass ${colors.accent("--force")}—prefer reattaching instead of spawning duplicates.`,
   ].join("\n");
 
@@ -93,10 +93,6 @@ function renderHelpFooter(program: Command, colors: HelpColors): string {
     formatExample(
       `${program.name()} --render --copy --prompt "Review the TS data layer for schema drift" --file "src/**/*.ts,*/*.test.ts"`,
       "Build the bundle, print it, and copy it for manual paste into ChatGPT.",
-    ),
-    formatExample(
-      `${program.name()} --prompt "Cross-check the data layer assumptions" --models gpt-5.2-pro,gemini-3-pro --file "src/**/*.ts"`,
-      "Run multiple API models in one go and aggregate cost/usage.",
     ),
     formatExample(
       `${program.name()} status --hours 72 --limit 50`,

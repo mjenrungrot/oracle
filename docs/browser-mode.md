@@ -1,6 +1,6 @@
 # Browser Mode
 
-Oracle in this fork is browser-only. Every run goes through ChatGPT in Chrome; there is no separate API engine anymore.
+Oracle in this fork is browser-only. Every run goes through ChatGPT in Chrome.
 
 ## What browser mode does
 

@@ -39,7 +39,7 @@ export function resolveRunOptionsFromConfig({
     .map((entry) => normalizeModelOption(entry))
     .filter(Boolean);
   if (resolvedEngine === "api") {
-    throw new PromptValidationError(browserOnlyEngineMessage("API engine"), {
+    throw new PromptValidationError(browserOnlyEngineMessage("--engine api"), {
       engine: resolvedEngine,
     });
   }

@@ -10,7 +10,7 @@ Current supported validation in this fork is browser-focused:
 Deprecated test surfaces are intentionally excluded from the default suite:
 
 - MCP
-- API mode
+- direct OpenAI / Azure endpoints
 - multi-model fan-out
 - Gemini / Claude / Grok / OpenRouter provider paths
 

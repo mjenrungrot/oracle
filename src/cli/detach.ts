@@ -17,7 +17,7 @@ export function shouldDetachSession({
   if (disableDetachEnv) return false;
   // Explicit --wait means "stay attached", regardless of model defaults.
   if (waitPreference) return false;
-  // Only Pro-tier API runs should start detached by default; browser runs stay inline so failures surface.
+  // Only Pro-tier runs via the legacy engine should start detached by default; browser runs stay inline so failures surface.
   if (isProModel(model) && engine === "api") return true;
   return false;
 }
