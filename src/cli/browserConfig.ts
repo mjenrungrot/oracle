@@ -66,6 +66,8 @@ export interface BrowserFlagOptions {
   browserManualLoginProfileDir?: string | null;
   /** Thinking time intensity: 'light', 'standard', 'extended', 'heavy' */
   browserThinkingTime?: ThinkingTimeLevel;
+  /** Enable Deep Research mode. */
+  deepResearch?: boolean;
   browserModelLabel?: string;
   browserModelStrategy?: BrowserModelStrategy;
   browserAllowCookieErrors?: boolean;
@@ -111,8 +113,9 @@ export async function buildBrowserConfig(
   const normalizedOverride = desiredModelOverride?.toLowerCase() ?? "";
   const baseModel = options.model.toLowerCase();
   const shouldUseOverride = normalizedOverride.length > 0 && normalizedOverride !== baseModel;
-  const modelStrategy =
-    normalizeBrowserModelStrategy(options.browserModelStrategy) ?? DEFAULT_MODEL_STRATEGY;
+  const modelStrategy = options.deepResearch
+    ? "ignore"
+    : (normalizeBrowserModelStrategy(options.browserModelStrategy) ?? DEFAULT_MODEL_STRATEGY);
   const cookieNames = parseCookieNames(
     options.browserCookieNames ?? process.env.ORACLE_BROWSER_COOKIE_NAMES,
   );
@@ -139,7 +142,7 @@ export async function buildBrowserConfig(
     : mapModelToBrowserLabel(options.model);
   const manualLogin = options.browserManualLogin ?? true;
   const defaultManualLoginProfileDir = path.join(getOracleHomeDir(), "browser-profile");
-  const cookieSync = options.browserNoCookieSync ? false : manualLogin ? false : true;
+  const cookieSync = options.browserNoCookieSync ? false : !manualLogin;
 
   if (
     modelStrategy === "select" &&
@@ -210,6 +213,7 @@ export async function buildBrowserConfig(
     allowCookieErrors: options.browserAllowCookieErrors ?? true,
     remoteChrome,
     thinkingTime: options.browserThinkingTime,
+    deepResearch: options.deepResearch ?? undefined,
   };
 }
 

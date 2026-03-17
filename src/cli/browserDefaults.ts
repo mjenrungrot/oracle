@@ -27,6 +27,7 @@ export interface BrowserDefaultsOptions {
   browserThinkingTime?: ThinkingTimeLevel;
   browserManualLogin?: boolean;
   browserManualLoginProfileDir?: string | null;
+  deepResearch?: boolean;
 }
 
 type SourceGetter = (key: keyof BrowserDefaultsOptions) => string | undefined;
@@ -118,5 +119,8 @@ export function applyBrowserDefaultsFromConfig(
   }
   if (isUnset("browserManualLoginProfileDir") && browser.manualLoginProfileDir !== undefined) {
     options.browserManualLoginProfileDir = browser.manualLoginProfileDir;
+  }
+  if (isUnset("deepResearch") && browser.deepResearch !== undefined) {
+    options.deepResearch = browser.deepResearch;
   }
 }

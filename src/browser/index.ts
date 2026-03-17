@@ -42,6 +42,11 @@ import { INPUT_SELECTORS } from "./constants.js";
 import { isMediaFile } from "./prompt.js";
 import { uploadAttachmentViaDataTransfer } from "./actions/remoteFileTransfer.js";
 import { ensureThinkingTime } from "./actions/thinkingTime.js";
+import {
+  activateDeepResearch,
+  waitForResearchPlanAutoConfirm,
+  waitForDeepResearchCompletion,
+} from "./actions/deepResearch.js";
 import { estimateTokenCount, withRetries, delay } from "./utils.js";
 import { formatElapsed } from "../oracle/format.js";
 import { CHATGPT_URL, CONVERSATION_TURN_SELECTOR, DEFAULT_MODEL_STRATEGY } from "./constants.js";
@@ -488,9 +493,27 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     } else if (modelStrategy === "ignore") {
       logger("Model picker: skipped (strategy=ignore)");
     }
-    // Handle thinking time selection if specified
+    // Handle thinking time selection if specified (skip when deep research is active)
+    const deepResearch = config.deepResearch;
     const thinkingTime = config.thinkingTime;
-    if (thinkingTime) {
+    if (deepResearch) {
+      logger("Deep Research mode — skipping thinking time selection.");
+      await raceWithDisconnect(
+        withRetries(() => activateDeepResearch(Runtime, Input, logger), {
+          retries: 2,
+          delayMs: 500,
+          onRetry: (attempt, error) => {
+            if (options.verbose) {
+              logger(
+                `[retry] Deep Research activation attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
+              );
+            }
+          },
+        }),
+      );
+      // Re-verify prompt textarea is ready after activation
+      await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
+    } else if (thinkingTime) {
       await raceWithDisconnect(
         withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger), {
           retries: 2,
@@ -663,7 +686,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             logger,
           );
           if (!verified) {
-            throw new Error("Sent user message did not expose attachment UI after upload.");
+            logger("Warning: Sent user message did not expose attachment UI after upload.");
           }
           logger("Verified attachments present on sent user message");
         }
@@ -721,6 +744,52 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         controllerPid: process.pid,
       };
     }
+
+    // ── Deep Research monitoring path ──
+    if (deepResearch) {
+      logger("Deep Research mode: monitoring research lifecycle…");
+      try {
+        await waitForResearchPlanAutoConfirm(Runtime, logger);
+        const resultMarkdown = await waitForDeepResearchCompletion(Runtime, logger, config.timeoutMs);
+        runStatus = "complete";
+        await captureRuntimeSnapshot().catch(() => undefined);
+        const tokens = estimateTokenCount(resultMarkdown);
+        return {
+          answerText: resultMarkdown,
+          answerMarkdown: resultMarkdown,
+          answerHtml: undefined,
+          tookMs: Date.now() - startedAt,
+          answerTokens: tokens,
+          answerChars: resultMarkdown.length,
+          chromePid: chrome.pid,
+          chromePort: chrome.port,
+          chromeHost,
+          userDataDir,
+          chromeTargetId: lastTargetId,
+          tabUrl: lastUrl,
+          controllerPid: process.pid,
+        };
+      } catch (error) {
+        if (error instanceof BrowserAutomationError) {
+          const enriched = new BrowserAutomationError(error.message, {
+            ...((error.details as Record<string, unknown>) ?? {}),
+            runtime: {
+              chromePid: chrome.pid,
+              chromePort: chrome.port,
+              chromeHost,
+              userDataDir,
+              chromeTargetId: lastTargetId,
+              tabUrl: lastUrl,
+              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              controllerPid: process.pid,
+            },
+          });
+          throw enriched;
+        }
+        throw error;
+      }
+    }
+
     stopThinkingMonitor = startThinkingStatusMonitor(Runtime, logger, options.verbose ?? false);
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
     const normalizeForComparison = (text: string): string =>

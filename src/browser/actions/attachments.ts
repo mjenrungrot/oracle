@@ -5,7 +5,6 @@ import {
   INPUT_SELECTORS,
   SEND_BUTTON_SELECTORS,
   UPLOAD_ERROR_SELECTORS,
-  UPLOAD_ERROR_TEXT_PATTERNS,
   UPLOAD_STATUS_SELECTORS,
 } from "../constants.js";
 import { delay } from "../utils.js";

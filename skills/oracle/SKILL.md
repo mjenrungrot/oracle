@@ -55,6 +55,20 @@ pnpm run oracle -- -p "<task>" --file "src/**" --file "!src/**/*.test.ts"
 
 Optionally specify a model: `--model gpt-5.4-pro` (default) or a ChatGPT picker label like `--model "5.4 Pro"`. Only ChatGPT-compatible models are accepted — non-ChatGPT providers (Claude, Gemini, Grok, Codex) are rejected.
 
+### Deep Research mode
+
+Add `--deep-research` to activate ChatGPT's autonomous web research mode. The model builds a research plan, auto-confirms it, and performs multi-step web research (typically 5-30 minutes) before producing a comprehensive report.
+
+```bash
+pnpm run oracle -- --deep-research -p "Research the history of TypeScript"
+```
+
+- Cannot be combined with `--models` (multi-model).
+- Model picker is skipped automatically (strategy set to `ignore`).
+- Timeout defaults to 40 minutes (override with `--browser-timeout`).
+- Sessions show as `browser/dr` in `oracle status`.
+- Supports reattach: if the CLI disconnects mid-research, use `oracle session <id>` to resume monitoring.
+
 > **Suppress the browser window:** Add `--browser-hide-window` to hide Chrome after launch (macOS, recommended) or `--browser-headless` for true headless mode (may trigger CAPTCHAs). Both can be set as defaults in `~/.oracle/config.json`.
 
 ### Step 4: If timeout/detach — reattach, never re-run

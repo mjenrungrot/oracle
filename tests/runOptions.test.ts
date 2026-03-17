@@ -20,7 +20,7 @@ describe("resolveRunOptionsFromConfig", () => {
         prompt: basePrompt,
         engine: "api",
       }),
-    ).toThrow(/API engine is deprecated/i);
+    ).toThrow(/api is deprecated/i);
   });
 
   it("rejects config engine api requests", () => {
@@ -29,7 +29,7 @@ describe("resolveRunOptionsFromConfig", () => {
         prompt: basePrompt,
         userConfig: { engine: "api" },
       }),
-    ).toThrow(/API engine is deprecated/i);
+    ).toThrow(/api is deprecated/i);
   });
 
   it("rejects ORACLE_ENGINE=api", () => {
@@ -38,7 +38,7 @@ describe("resolveRunOptionsFromConfig", () => {
         prompt: basePrompt,
         env: { ORACLE_ENGINE: "api" },
       }),
-    ).toThrow(/API engine is deprecated/i);
+    ).toThrow(/api is deprecated/i);
   });
 
   it("defaults to gpt-5.4-pro when model not provided", () => {

@@ -154,6 +154,7 @@ interface CliOptions extends OptionValues {
   browserManualLogin?: boolean;
   browserManualLoginProfileDir?: string;
   browserThinkingTime?: "light" | "standard" | "extended" | "heavy";
+  deepResearch?: boolean;
   browserAllowCookieErrors?: boolean;
   browserAttachments?: string;
   browserInlineFiles?: boolean;
@@ -609,6 +610,10 @@ program
     )
       .choices(["light", "standard", "extended", "heavy"])
       .hideHelp(),
+  )
+  .option(
+    "--deep-research",
+    "Activate ChatGPT Deep Research mode (autonomous web research, 5-30 min).",
   )
   .addOption(
     new Option(
@@ -1247,6 +1252,12 @@ async function runRootCommand(options: CliOptions): Promise<void> {
   }
 
   assertBrowserOnlyInvocation({ options, userConfig, optionUsesDefault, multiModelProvided });
+
+  if (options.deepResearch) {
+    if (multiModelProvided) {
+      throw new Error("--deep-research cannot be combined with multiple --models.");
+    }
+  }
 
   if (remoteHost && options.remoteChrome) {
     throw new Error("--remote-host cannot be combined with --remote-chrome.");

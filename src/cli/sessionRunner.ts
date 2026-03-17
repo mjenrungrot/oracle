@@ -60,7 +60,7 @@ export async function performSessionRun({
     throw new Error(browserOnlyEngineMessage(`Stored ${mode} sessions`));
   }
 
-  const writeInline = (chunk: string): boolean => {
+  const _writeInline = (chunk: string): boolean => {
     write(chunk);
     return muteStdout ? true : process.stdout.write(chunk);
   };
@@ -325,15 +325,20 @@ async function autoReattachUntilComplete({
     log(dim("Auto-reattach disabled: missing runtime or browser config."));
     return false;
   }
-  const delayMs = Math.max(0, browserConfig.autoReattachDelayMs ?? 0);
-  const intervalMs = Math.max(0, browserConfig.autoReattachIntervalMs ?? 0);
+  const isDeepResearch = Boolean(browserConfig.deepResearch);
+  const delayMs = Math.max(isDeepResearch ? 120_000 : 0, browserConfig.autoReattachDelayMs ?? 0);
+  const intervalMs = Math.max(
+    isDeepResearch ? 60_000 : 0,
+    browserConfig.autoReattachIntervalMs ?? 0,
+  );
   if (intervalMs <= 0) {
     return false;
   }
-  const timeoutMs =
-    Math.max(0, browserConfig.autoReattachTimeoutMs ?? 0) ||
-    Math.max(0, browserConfig.timeoutMs ?? 0) ||
-    120_000;
+  const timeoutMs = isDeepResearch
+    ? Math.max(300_000, browserConfig.autoReattachTimeoutMs ?? 0, browserConfig.timeoutMs ?? 0)
+    : Math.max(0, browserConfig.autoReattachTimeoutMs ?? 0) ||
+      Math.max(0, browserConfig.timeoutMs ?? 0) ||
+      120_000;
   const maxTotalMs = 2 * 60 * 60 * 1000;
   const maxDeadline = Date.now() + maxTotalMs;
 

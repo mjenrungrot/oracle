@@ -15,7 +15,12 @@ import type { BrowserLogger, ChromeClient } from "./types.js";
 import { launchChrome, connectToChrome, hideChromeWindow } from "./chromeLifecycle.js";
 import { resolveBrowserConfig } from "./config.js";
 import { syncCookies } from "./cookies.js";
-import { CHATGPT_URL } from "./constants.js";
+import { CHATGPT_URL, DEEP_RESEARCH_DEFAULT_TIMEOUT_MS } from "./constants.js";
+import {
+  checkDeepResearchStatus,
+  extractDeepResearchResult,
+  waitForDeepResearchCompletion,
+} from "./pageActions.js";
 import { cleanupStaleProfileState } from "./profileState.js";
 import {
   pickTarget,
@@ -127,6 +132,30 @@ export async function resumeBrowserSession(
       "Reattach target did not respond",
     );
     await ensureConversationOpen();
+
+    // Deep Research reattach path
+    if (config?.deepResearch) {
+      const drStatus = await checkDeepResearchStatus(Runtime, logger);
+      if (drStatus.completed) {
+        logger("Deep Research already completed — extracting result.");
+        const result = await extractDeepResearchResult(Runtime, logger);
+        if (client && typeof client.close === "function") {
+          try { await client.close(); } catch { /* ignore */ }
+        }
+        return { answerText: result, answerMarkdown: result };
+      }
+      if (drStatus.inProgress) {
+        logger("Deep Research still in progress — resuming monitoring.");
+        const drTimeout = config?.timeoutMs ?? DEEP_RESEARCH_DEFAULT_TIMEOUT_MS;
+        const result = await waitForDeepResearchCompletion(Runtime, logger, drTimeout);
+        if (client && typeof client.close === "function") {
+          try { await client.close(); } catch { /* ignore */ }
+        }
+        return { answerText: result, answerMarkdown: result };
+      }
+      logger("Deep Research status unclear — falling through to normal response waiting.");
+    }
+
     const minTurnIndex = await readConversationTurnIndex(Runtime, logger);
     const promptEcho = buildPromptEchoMatcher(deps.promptPreview);
     const answer = await withTimeout(
@@ -242,6 +271,35 @@ async function resumeBrowserSessionViaNewChrome(
       throw new Error("Unable to locate prior ChatGPT conversation in sidebar.");
     }
     await waitForLocationChange(Runtime, 15_000);
+  }
+
+  // Deep Research reattach path (new Chrome)
+  if (config?.deepResearch) {
+    const drStatus = await checkDeepResearchStatus(Runtime, logger);
+    if (drStatus.completed) {
+      logger("Deep Research already completed — extracting result.");
+      const result = await extractDeepResearchResult(Runtime, logger);
+      if (client && typeof client.close === "function") {
+        try { await client.close(); } catch { /* ignore */ }
+      }
+      if (!resolved.keepBrowser) {
+        try { await chrome.kill(); } catch { /* ignore */ }
+      }
+      return { answerText: result, answerMarkdown: result };
+    }
+    if (drStatus.inProgress) {
+      logger("Deep Research still in progress — resuming monitoring.");
+      const drTimeout = resolved.timeoutMs ?? DEEP_RESEARCH_DEFAULT_TIMEOUT_MS;
+      const result = await waitForDeepResearchCompletion(Runtime, logger, drTimeout);
+      if (client && typeof client.close === "function") {
+        try { await client.close(); } catch { /* ignore */ }
+      }
+      if (!resolved.keepBrowser) {
+        try { await chrome.kill(); } catch { /* ignore */ }
+      }
+      return { answerText: result, answerMarkdown: result };
+    }
+    logger("Deep Research status unclear — falling through to normal response waiting.");
   }
 
   const waitForResponse = deps.waitForAssistantResponse ?? waitForAssistantResponse;

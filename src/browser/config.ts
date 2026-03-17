@@ -1,4 +1,9 @@
-import { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "./constants.js";
+import {
+  CHATGPT_URL,
+  DEFAULT_MODEL_STRATEGY,
+  DEFAULT_MODEL_TARGET,
+  DEEP_RESEARCH_DEFAULT_TIMEOUT_MS,
+} from "./constants.js";
 import { normalizeBrowserModelStrategy } from "./modelStrategy.js";
 import type { BrowserAutomationConfig, ResolvedBrowserConfig } from "./types.js";
 import { isTemporaryChatUrl, normalizeChatgptUrl } from "./utils.js";
@@ -70,7 +75,7 @@ export function resolveBrowserConfig(
     );
   }
   const manualLogin = config?.manualLogin ?? DEFAULT_BROWSER_CONFIG.manualLogin;
-  const cookieSyncDefault = manualLogin ? false : true;
+  const cookieSyncDefault = !manualLogin;
   const resolvedProfileDir =
     config?.manualLoginProfileDir ??
     process.env.ORACLE_BROWSER_PROFILE_DIR ??
@@ -80,7 +85,9 @@ export function resolveBrowserConfig(
     ...config,
     url: normalizedUrl,
     chatgptUrl: normalizedUrl,
-    timeoutMs: config?.timeoutMs ?? DEFAULT_BROWSER_CONFIG.timeoutMs,
+    timeoutMs:
+      config?.timeoutMs ??
+      (config?.deepResearch ? DEEP_RESEARCH_DEFAULT_TIMEOUT_MS : DEFAULT_BROWSER_CONFIG.timeoutMs),
     debugPort: config?.debugPort ?? debugPortEnv ?? DEFAULT_BROWSER_CONFIG.debugPort,
     inputTimeoutMs: config?.inputTimeoutMs ?? DEFAULT_BROWSER_CONFIG.inputTimeoutMs,
     assistantRecheckDelayMs:
@@ -112,6 +119,7 @@ export function resolveBrowserConfig(
     allowCookieErrors:
       config?.allowCookieErrors ?? envAllowCookieErrors ?? DEFAULT_BROWSER_CONFIG.allowCookieErrors,
     thinkingTime: config?.thinkingTime,
+    deepResearch: config?.deepResearch,
     manualLogin,
     manualLoginProfileDir: manualLogin ? resolvedProfileDir : null,
     manualLoginCookieSync:

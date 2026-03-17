@@ -201,6 +201,30 @@ describe("buildBrowserConfig", () => {
   });
 });
 
+describe("buildBrowserConfig deep research", () => {
+  test("forces modelStrategy to ignore when deepResearch is set", async () => {
+    const config = await buildBrowserConfig({
+      model: "gpt-5.4-pro",
+      deepResearch: true,
+    });
+    expect(config.modelStrategy).toBe("ignore");
+    expect(config.deepResearch).toBe(true);
+  });
+
+  test("passes deepResearch through config pipeline", async () => {
+    const config = await buildBrowserConfig({
+      model: "gpt-5.2",
+      deepResearch: true,
+    });
+    expect(config.deepResearch).toBe(true);
+  });
+
+  test("deepResearch is undefined when not set", async () => {
+    const config = await buildBrowserConfig({ model: "gpt-5.2" });
+    expect(config.deepResearch).toBeUndefined();
+  });
+});
+
 describe("resolveBrowserModelLabel", () => {
   test("returns canonical ChatGPT label when CLI value matches API model", () => {
     expect(resolveBrowserModelLabel("gpt-5.4-pro", "gpt-5.4-pro")).toBe("GPT-5.4 Pro");

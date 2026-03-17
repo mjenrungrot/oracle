@@ -187,3 +187,75 @@ describe("reattach helpers", () => {
     expect(call?.expression).toContain("const preferProjects = false");
   });
 });
+
+describe("resumeBrowserSession deep research", () => {
+  test("extracts completed deep research result via reattach", async () => {
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/c/deep-research",
+    };
+    const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+      if (expression === "location.href") {
+        return { result: { value: runtime.tabUrl } };
+      }
+      if (expression === "1+1") {
+        return { result: { value: 2 } };
+      }
+      // checkDeepResearchStatus — report completed
+      if (expression.includes("finished") || expression.includes("stop")) {
+        return {
+          result: {
+            value: { completed: true, inProgress: false, hasIframe: false, textLength: 3000 },
+          },
+        };
+      }
+      // readAssistantSnapshot
+      if (expression.includes("data-message-author-role") && !expression.includes("copy")) {
+        return {
+          result: {
+            value: { text: "Deep research report", messageId: "m1", turnId: "t1" },
+          },
+        };
+      }
+      // captureAssistantMarkdown
+      if (expression.includes("copy")) {
+        return {
+          result: { value: { success: true, markdown: "# Deep Research Report\n\nContent here." } },
+        };
+      }
+      return { result: { value: null } };
+    });
+    const listTargets = vi.fn(
+      async () =>
+        [
+          { targetId: "target-1", type: "page", url: runtime.tabUrl },
+        ] satisfies FakeTarget[],
+    ) as unknown as () => Promise<FakeTarget[]>;
+    const connect = vi.fn(
+      async () =>
+        ({
+          // biome-ignore lint/style/useNamingConvention: mirrors DevTools protocol domain names
+          Runtime: { enable: vi.fn(), evaluate },
+          // biome-ignore lint/style/useNamingConvention: mirrors DevTools protocol domain names
+          DOM: { enable: vi.fn() },
+          close: vi.fn(async () => {}),
+        }) satisfies FakeClient,
+    ) as unknown as (options?: unknown) => Promise<ChromeClient>;
+    const logger = vi.fn() as BrowserLogger;
+    logger.verbose = true;
+
+    const result = await resumeBrowserSession(
+      runtime,
+      { timeoutMs: 2000, deepResearch: true },
+      logger,
+      { listTargets, connect },
+    );
+
+    expect(result.answerMarkdown.length).toBeGreaterThan(0);
+    expect(logger).toHaveBeenCalledWith(
+      "Deep Research already completed — extracting result.",
+    );
+  });
+});
