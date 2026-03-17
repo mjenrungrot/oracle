@@ -10,6 +10,11 @@ import {
 import { delay } from "../utils.js";
 import { logDomFailure } from "../domDebug.js";
 import { transferAttachmentViaDataTransfer } from "./attachmentDataTransfer.js";
+import {
+  readComposerSendReadiness,
+  evaluateComposerAttachmentEvidence,
+  hasAttachmentCompletionEvidence,
+} from "./composerSendReadiness.js";
 
 export class AttachmentUploadError extends Error {
   readonly failedFiles: string[];
@@ -1351,459 +1356,122 @@ export async function waitForAttachmentCompletion(
   logger?: BrowserLogger,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  const expectedNormalized = expectedNames.map((name) => name.toLowerCase());
-  let inputMatchSince: number | null = null;
-  let sawInputMatch = false;
-  let attachmentMatchSince: number | null = null;
+  let evidenceStableSince: number | null = null;
   let lastVerboseLog = 0;
   let sawError = false;
   let errorSince: number | null = null;
   let lastErrorText = "";
   let partialSince: number | null = null;
-  const expression = `(() => {
-    const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
-    const promptSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-    const findPromptNode = () => {
-      for (const selector of promptSelectors) {
-        const nodes = Array.from(document.querySelectorAll(selector));
-        for (const node of nodes) {
-          if (!(node instanceof HTMLElement)) continue;
-          const rect = node.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) return node;
-        }
-      }
-      for (const selector of promptSelectors) {
-        const node = document.querySelector(selector);
-        if (node) return node;
-      }
-      return null;
-    };
-    const attachmentSelectors = [
-      'input[type="file"]',
-      '[data-testid*="attachment"]',
-      '[data-testid*="upload"]',
-      '[aria-label*="Remove"]',
-      '[aria-label*="remove"]',
-    ];
-    const locateComposerRoot = () => {
-      const promptNode = findPromptNode();
-      if (promptNode) {
-        const initial =
-          promptNode.closest('[data-testid*="composer"]') ??
-          promptNode.closest('form') ??
-          promptNode.parentElement ??
-          document.body;
-        let current = initial;
-        let fallback = initial;
-        while (current && current !== document.body) {
-          const hasSend = sendSelectors.some((selector) => current.querySelector(selector));
-          if (hasSend) {
-            fallback = current;
-            const hasAttachment = attachmentSelectors.some((selector) => current.querySelector(selector));
-            if (hasAttachment) {
-              return current;
-            }
-          }
-          current = current.parentElement;
-        }
-        return fallback ?? initial;
-      }
-      return document.querySelector('form') ?? document.body;
-    };
-    const composerRoot = locateComposerRoot();
-    const composerScope = (() => {
-      if (!composerRoot) return document;
-      const parent = composerRoot.parentElement;
-      const parentHasSend = parent && sendSelectors.some((selector) => parent.querySelector(selector));
-      return parentHasSend ? parent : composerRoot;
-    })();
-    let button = null;
-    for (const selector of sendSelectors) {
-      button = document.querySelector(selector);
-      if (button) break;
-    }
-    const disabled = button
-      ? button.hasAttribute('disabled') ||
-        button.getAttribute('aria-disabled') === 'true' ||
-        button.getAttribute('data-disabled') === 'true' ||
-        window.getComputedStyle(button).pointerEvents === 'none'
-      : null;
-    const uploadingSelectors = ${JSON.stringify(UPLOAD_STATUS_SELECTORS)};
-    const uploading = uploadingSelectors.some((selector) => {
-      return Array.from(document.querySelectorAll(selector)).some((node) => {
-        const ariaBusy = node.getAttribute?.('aria-busy');
-        const dataState = node.getAttribute?.('data-state');
-        if (ariaBusy === 'true' || dataState === 'loading' || dataState === 'uploading' || dataState === 'pending') {
-          return true;
-        }
-        // Avoid false positives from user prompts ("upload:") or generic UI copy; only treat explicit progress strings as uploading.
-        const text = node.textContent?.toLowerCase?.() ?? '';
-        return /\buploading\b/.test(text) || /\bprocessing\b/.test(text);
-      });
-    });
-    const attachmentChipSelectors = [
-      '[data-testid*="chip"]',
-      '[data-testid*="attachment"]',
-      '[data-testid*="upload"]',
-      '[data-testid*="file"]',
-      '[aria-label*="Remove"]',
-      'button[aria-label*="Remove"]',
-    ];
-    const attachedNames = [];
-    for (const selector of attachmentChipSelectors) {
-      for (const node of Array.from(composerScope.querySelectorAll(selector))) {
-        if (!node) continue;
-        const text = node.textContent ?? '';
-        const aria = node.getAttribute?.('aria-label') ?? '';
-        const title = node.getAttribute?.('title') ?? '';
-        const parentText = node.parentElement?.parentElement?.innerText ?? '';
-        for (const value of [text, aria, title, parentText]) {
-          const normalized = value?.toLowerCase?.();
-          if (normalized) attachedNames.push(normalized);
-        }
-      }
-    }
-    const cardTexts = Array.from(composerScope.querySelectorAll('[aria-label*="Remove"]')).map((btn) =>
-      btn?.parentElement?.parentElement?.innerText?.toLowerCase?.() ?? '',
-    );
-    attachedNames.push(...cardTexts.filter(Boolean));
 
-    const inputNames = [];
-    const inputScope = composerScope ? Array.from(composerScope.querySelectorAll('input[type="file"]')) : [];
-    const inputNodes = [];
-    const inputSeen = new Set();
-    for (const el of [...inputScope, ...Array.from(document.querySelectorAll('input[type="file"]'))]) {
-      if (!inputSeen.has(el)) {
-        inputSeen.add(el);
-        inputNodes.push(el);
-      }
-    }
-    for (const input of inputNodes) {
-      if (!(input instanceof HTMLInputElement) || !input.files?.length) continue;
-      for (const file of Array.from(input.files)) {
-        if (file?.name) inputNames.push(file.name.toLowerCase());
-      }
-    }
-    const countRegex = /(?:^|\\b)(\\d+)\\s+(?:files?|attachments?)\\b/;
-    const fileCountSelectors = [
-      'button',
-      '[role="button"]',
-      '[data-testid*="file"]',
-      '[data-testid*="upload"]',
-      '[data-testid*="attachment"]',
-      '[data-testid*="chip"]',
-      '[aria-label*="file"]',
-      '[title*="file"]',
-      '[aria-label*="attachment"]',
-      '[title*="attachment"]',
-    ].join(',');
-    const collectFileCount = (nodes) => {
-      let count = 0;
-      for (const node of nodes) {
-        if (!(node instanceof HTMLElement)) continue;
-        if (node.matches('textarea,input,[contenteditable="true"]')) continue;
-        const dataTestId = node.getAttribute?.('data-testid') ?? '';
-        const aria = node.getAttribute?.('aria-label') ?? '';
-        const title = node.getAttribute?.('title') ?? '';
-        const tooltip =
-          node.getAttribute?.('data-tooltip') ?? node.getAttribute?.('data-tooltip-content') ?? '';
-        const text = node.textContent ?? '';
-        const parent = node.parentElement;
-        const parentText = parent?.textContent ?? '';
-        const parentAria = parent?.getAttribute?.('aria-label') ?? '';
-        const parentTitle = parent?.getAttribute?.('title') ?? '';
-        const parentTooltip =
-          parent?.getAttribute?.('data-tooltip') ?? parent?.getAttribute?.('data-tooltip-content') ?? '';
-        const parentTestId = parent?.getAttribute?.('data-testid') ?? '';
-        const candidates = [
-          text,
-          aria,
-          title,
-          tooltip,
-          dataTestId,
-          parentText,
-          parentAria,
-          parentTitle,
-          parentTooltip,
-          parentTestId,
-        ];
-        let hasFileHint = false;
-        for (const raw of candidates) {
-          if (!raw) continue;
-          const lowered = String(raw).toLowerCase();
-          if (lowered.includes('file') || lowered.includes('attachment')) {
-            hasFileHint = true;
-            break;
-          }
-        }
-        if (!hasFileHint) continue;
-        for (const raw of candidates) {
-          if (!raw) continue;
-          const match = String(raw).toLowerCase().match(countRegex);
-          if (match) {
-            const parsed = Number(match[1]);
-            if (Number.isFinite(parsed)) {
-              count = Math.max(count, parsed);
-            }
-          }
-        }
-      }
-      return count;
-    };
-    const localFileCountNodes = composerScope
-      ? Array.from(composerScope.querySelectorAll(fileCountSelectors))
-      : [];
-    let fileCount = collectFileCount(localFileCountNodes);
-    if (!fileCount) {
-      fileCount = collectFileCount(Array.from(document.querySelectorAll(fileCountSelectors)));
-    }
-    const filesAttached = attachedNames.length > 0 || fileCount > 0;
-
-    // --- Upload error detection ---
-    const errorSelectors = ${JSON.stringify(UPLOAD_ERROR_SELECTORS)};
-    const errorPatterns = [
-      /unsupported\\s+file/i, /upload\\s+fail/i, /can['\\u2019]?t\\s+upload/i,
-      /unable\\s+to\\s+upload/i, /file\\s+type.*not\\s+(?:supported|allowed)/i,
-      /error\\s+uploading/i, /couldn['\\u2019]?t\\s+(?:upload|attach)/i,
-      /not\\s+(?:a\\s+)?supported/i,
-    ];
-    let errorDetected = false;
-    let errorText = '';
-    for (const selector of errorSelectors) {
-      for (const el of Array.from(document.querySelectorAll(selector))) {
-        const elText = (el.textContent || '').trim();
-        if (!elText) continue;
-        for (const pattern of errorPatterns) {
-          if (pattern.test(elText)) {
-            errorDetected = true;
-            errorText = elText;
-            break;
-          }
-        }
-        if (errorDetected) break;
-      }
-      if (errorDetected) break;
-    }
-    if (!errorDetected) {
-      for (const selector of attachmentChipSelectors) {
-        for (const node of Array.from(composerScope.querySelectorAll(selector))) {
-          const ds = node.getAttribute?.('data-state') ?? '';
-          if (ds === 'error' || ds === 'failed') {
-            errorDetected = true;
-            errorText = (node.textContent || '').trim() || 'Attachment ' + ds;
-            break;
-          }
-        }
-        if (errorDetected) break;
-      }
-    }
-
-    return {
-      state: button ? (disabled ? 'disabled' : 'ready') : 'missing',
-      uploading,
-      filesAttached,
-      attachedNames,
-      inputNames,
-      fileCount,
-      errorDetected,
-      errorText,
-    };
-  })()`;
   while (Date.now() < deadline) {
-    const response = await Runtime.evaluate({ expression, returnByValue: true });
-    const { result } = response;
-    const value = result?.value as
-      | {
-          state?: string;
-          uploading?: boolean;
-          filesAttached?: boolean;
-          attachedNames?: string[];
-          inputNames?: string[];
-          fileCount?: number;
-          errorDetected?: boolean;
-          errorText?: string;
-        }
-      | undefined;
-    if (!value && logger?.verbose) {
-      const exception = (
-        response as { exceptionDetails?: { text?: string; exception?: { description?: string } } }
-      )?.exceptionDetails;
-      if (exception) {
-        const details = [exception.text, exception.exception?.description]
-          .filter((part) => Boolean(part))
-          .join(" - ");
-        logger(`Attachment wait eval failed: ${details || "unknown error"}`);
+    const state = await readComposerSendReadiness(Runtime);
+    if (!state) {
+      await delay(250);
+      continue;
+    }
+
+    if (logger?.verbose) {
+      const now = Date.now();
+      if (now - lastVerboseLog > 3000) {
+        lastVerboseLog = now;
+        logger(
+          `Attachment wait state: ${JSON.stringify({
+            state: state.state,
+            uploading: state.uploading,
+            filesAttached: state.filesAttached,
+            attachedNames: (state.attachedNames ?? []).slice(0, 3),
+            inputNames: (state.inputNames ?? []).slice(0, 3),
+            fileCount: state.fileCount ?? 0,
+            attachmentUiCount: state.attachmentUiCount ?? 0,
+            errorDetected: state.errorDetected ?? false,
+          })}`,
+        );
       }
     }
-    if (value) {
-      if (logger?.verbose) {
-        const now = Date.now();
-        if (now - lastVerboseLog > 3000) {
-          lastVerboseLog = now;
-          logger(
-            `Attachment wait state: ${JSON.stringify({
-              state: value.state,
-              uploading: value.uploading,
-              filesAttached: value.filesAttached,
-              attachedNames: (value.attachedNames ?? []).slice(0, 3),
-              inputNames: (value.inputNames ?? []).slice(0, 3),
-              fileCount: value.fileCount ?? 0,
-              errorDetected: value.errorDetected ?? false,
-            })}`,
-          );
-        }
-      }
 
-      // --- Upload error detection (sticky) ---
-      if (value.errorDetected) {
-        sawError = true;
-        lastErrorText = value.errorText || lastErrorText || "Upload error detected";
-        if (errorSince === null) {
-          errorSince = Date.now();
-        }
+    // --- Upload error detection (sticky) ---
+    if (state.errorDetected) {
+      sawError = true;
+      lastErrorText = state.errorText || lastErrorText || "Upload error detected";
+      if (errorSince === null) {
+        errorSince = Date.now();
       }
-      if (sawError && errorSince !== null && Date.now() - errorSince > 500) {
-        // Identify which expected files are NOT successfully attached
-        const successfullyAttached = (value.attachedNames ?? [])
-          .map((n) => n.toLowerCase().replace(/\s+/g, " ").trim())
-          .filter(Boolean);
-        const failedFiles = expectedNames.filter((expected) => {
-          const baseName = (expected.split("/").pop()?.split("\\").pop() ?? expected).toLowerCase();
+    }
+    if (sawError && errorSince !== null && Date.now() - errorSince > 500) {
+      const successfullyAttached = (state.attachedNames ?? [])
+        .map((n) => n.toLowerCase().replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+      const failedFiles = expectedNames.filter((expected) => {
+        const baseName = (expected.split("/").pop()?.split("\\").pop() ?? expected).toLowerCase();
+        const baseNoExt = baseName.replace(/\.[a-z0-9]{1,10}$/i, "");
+        return !successfullyAttached.some(
+          (raw) =>
+            raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
+        );
+      });
+      throw new AttachmentUploadError(
+        `Upload error detected: ${lastErrorText}`,
+        failedFiles.length > 0 ? failedFiles : expectedNames,
+        lastErrorText,
+      );
+    }
+
+    // --- Evaluate attachment evidence using shared readiness module ---
+    const evidence = evaluateComposerAttachmentEvidence(state, expectedNames);
+
+    if (evidence.hasEvidence) {
+      const stableThresholdMs = state.uploading ? 3000 : 1500;
+      if (evidenceStableSince === null) {
+        evidenceStableSince = Date.now();
+      }
+      const stable = Date.now() - evidenceStableSince > stableThresholdMs;
+      if (stable && state.state === "ready") {
+        return;
+      }
+      if (state.state === "missing" && (state.filesAttached || evidence.fileCountSatisfied)) {
+        return;
+      }
+      if (state.filesAttached || evidence.fileCountSatisfied) {
+        await delay(500);
+        continue;
+      }
+    } else {
+      evidenceStableSince = null;
+    }
+
+    // --- Silent rejection detection ---
+    if (
+      evidence.missingNames.length > 0 &&
+      state.state === "ready" &&
+      !state.uploading
+    ) {
+      if (partialSince === null) {
+        partialSince = Date.now();
+      }
+      if (Date.now() - partialSince > 3000) {
+        const failedFiles = expectedNames.filter((name) => {
+          const baseName = (name.split("/").pop()?.split("\\").pop() ?? name).toLowerCase();
           const baseNoExt = baseName.replace(/\.[a-z0-9]{1,10}$/i, "");
-          return !successfullyAttached.some(
+          const attachedNames = (state.attachedNames ?? [])
+            .map((n) => n.toLowerCase().replace(/\s+/g, " ").trim())
+            .filter(Boolean);
+          return !attachedNames.some(
             (raw) =>
               raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
           );
         });
-        throw new AttachmentUploadError(
-          `Upload error detected: ${lastErrorText}`,
-          failedFiles.length > 0 ? failedFiles : expectedNames,
-          lastErrorText,
-        );
+        if (failedFiles.length > 0) {
+          throw new AttachmentUploadError(
+            `ChatGPT silently rejected ${failedFiles.length} file(s): ${failedFiles.join(", ")}`,
+            failedFiles,
+            "Files were silently dropped by ChatGPT (unsupported file type)",
+          );
+        }
       }
-
-      const attachedNames = (value.attachedNames ?? [])
-        .map((name) => name.toLowerCase().replace(/\s+/g, " ").trim())
-        .filter(Boolean);
-      const inputNames = (value.inputNames ?? [])
-        .map((name) => name.toLowerCase().replace(/\s+/g, " ").trim())
-        .filter(Boolean);
-      const fileCount = typeof value.fileCount === "number" ? value.fileCount : 0;
-      const fileCountSatisfied =
-        expectedNormalized.length > 0 && fileCount >= expectedNormalized.length;
-      const matchesExpected = (expected: string): boolean => {
-        const baseName = expected.split("/").pop()?.split("\\").pop() ?? expected;
-        const normalizedExpected = baseName.toLowerCase().replace(/\s+/g, " ").trim();
-        const expectedNoExt = normalizedExpected.replace(/\.[a-z0-9]{1,10}$/i, "");
-        return attachedNames.some((raw) => {
-          if (raw.includes(normalizedExpected)) return true;
-          if (expectedNoExt.length >= 6 && raw.includes(expectedNoExt)) return true;
-          if (raw.includes("…") || raw.includes("...")) {
-            const marker = raw.includes("…") ? "…" : "...";
-            const [prefixRaw, suffixRaw] = raw.split(marker);
-            const prefix = prefixRaw.trim();
-            const suffix = suffixRaw.trim();
-            const target = expectedNoExt.length >= 6 ? expectedNoExt : normalizedExpected;
-            const matchesPrefix = !prefix || target.includes(prefix);
-            const matchesSuffix = !suffix || target.includes(suffix);
-            return matchesPrefix && matchesSuffix;
-          }
-          return false;
-        });
-      };
-      const missing = expectedNormalized.filter((expected) => !matchesExpected(expected));
-      if (missing.length === 0 || fileCountSatisfied) {
-        const stableThresholdMs = value.uploading ? 3000 : 1500;
-        if (attachmentMatchSince === null) {
-          attachmentMatchSince = Date.now();
-        }
-        const stable = Date.now() - attachmentMatchSince > stableThresholdMs;
-        if (stable && value.state === "ready") {
-          return;
-        }
-        // Don't treat disabled button as complete - wait for it to become 'ready'.
-        // The spinner detection is unreliable, so a disabled button likely means upload is in progress.
-        if (value.state === "missing" && (value.filesAttached || fileCountSatisfied)) {
-          return;
-        }
-        // If files are attached but button isn't ready yet, give it more time but don't fail immediately.
-        if (value.filesAttached || fileCountSatisfied) {
-          await delay(500);
-          continue;
-        }
-      } else {
-        attachmentMatchSince = null;
-      }
-
-      // Fallback: if the file input has the expected names, allow progress once that condition is stable.
-      // Some ChatGPT surfaces only render the filename after sending the message.
-      const inputMissing = expectedNormalized.filter((expected) => {
-        const baseName = expected.split("/").pop()?.split("\\").pop() ?? expected;
-        const normalizedExpected = baseName.toLowerCase().replace(/\s+/g, " ").trim();
-        const expectedNoExt = normalizedExpected.replace(/\.[a-z0-9]{1,10}$/i, "");
-        return !inputNames.some(
-          (raw) =>
-            raw.includes(normalizedExpected) ||
-            (expectedNoExt.length >= 6 && raw.includes(expectedNoExt)),
-        );
-      });
-      // Don't include 'disabled' - a disabled button likely means upload is still in progress.
-      const inputStateOk = value.state === "ready" || value.state === "missing";
-      const inputSeenNow = inputMissing.length === 0 || fileCountSatisfied;
-      const inputEvidenceOk =
-        Boolean(value.filesAttached) || Boolean(value.uploading) || fileCountSatisfied;
-      const stableThresholdMs = value.uploading ? 3000 : 1500;
-      if (inputSeenNow && inputStateOk && inputEvidenceOk) {
-        if (inputMatchSince === null) {
-          inputMatchSince = Date.now();
-        }
-        sawInputMatch = true;
-      }
-      if (
-        inputMatchSince !== null &&
-        inputStateOk &&
-        inputEvidenceOk &&
-        Date.now() - inputMatchSince > stableThresholdMs
-      ) {
-        return;
-      }
-      if (!inputSeenNow && !sawInputMatch) {
-        inputMatchSince = null;
-      }
-
-      // --- Silent rejection detection ---
-      // ChatGPT silently drops unsupported file types (e.g. .tsx) with no error UI.
-      // Detect: expected files are consistently missing, button is ready, not uploading.
-      // Covers both partial (some files attached) and total (no files attached) rejection.
-      if (
-        missing.length > 0 &&
-        value.state === "ready" &&
-        !value.uploading
-      ) {
-        if (partialSince === null) {
-          partialSince = Date.now();
-        }
-        if (Date.now() - partialSince > 3000) {
-          const failedFiles = expectedNames.filter((name) => {
-            const baseName = (name.split("/").pop()?.split("\\").pop() ?? name).toLowerCase();
-            const baseNoExt = baseName.replace(/\.[a-z0-9]{1,10}$/i, "");
-            return !attachedNames.some(
-              (raw) =>
-                raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
-            );
-          });
-          if (failedFiles.length > 0) {
-            throw new AttachmentUploadError(
-              `ChatGPT silently rejected ${failedFiles.length} file(s): ${failedFiles.join(", ")}`,
-              failedFiles,
-              "Files were silently dropped by ChatGPT (unsupported file type)",
-            );
-          }
-        }
-      } else {
-        partialSince = null;
-      }
+    } else {
+      partialSince = null;
     }
+
     await delay(250);
   }
   logger?.("Attachment upload timed out while waiting for ChatGPT composer to become ready.");

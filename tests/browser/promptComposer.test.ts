@@ -1,7 +1,45 @@
 import { describe, expect, test, vi } from "vitest";
 import { __test__ as promptComposer } from "../../src/browser/actions/promptComposer.js";
+import { BrowserAutomationError } from "../../src/oracle/errors.js";
 
 describe("promptComposer", () => {
+  test("attachment sends throw instead of falling back to Enter when composer never becomes send-ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn().mockResolvedValue({
+          result: {
+            value: {
+              state: "disabled",
+              uploading: true,
+              filesAttached: true,
+              attachedNames: ["report.txt"],
+              inputNames: [],
+              fileCount: 1,
+              attachmentUiCount: 1,
+              errorDetected: false,
+              errorText: "",
+            },
+          },
+        }),
+      } as unknown as {
+        evaluate: (args: { expression: string; returnByValue?: boolean }) => Promise<unknown>;
+      };
+
+      const promise = promptComposer.attemptSendButton(
+        runtime as never,
+        undefined,
+        ["report.txt"],
+        15_000,
+      );
+      const assertion = expect(promise).rejects.toThrow(BrowserAutomationError);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("does not treat cleared composer + stop button as committed without a new turn", async () => {
     vi.useFakeTimers();
     try {

@@ -8,7 +8,7 @@ Oracle in this fork is browser-only. Every run goes through ChatGPT in Chrome.
 2. Launches or reuses Chrome.
 3. Reuses a persistent manual-login profile by default and waits for ChatGPT login on first use.
 4. Selects the requested ChatGPT/GPT browser model.
-5. Pastes or uploads the bundle.
+5. Pastes or uploads the bundle. Attachment submissions first wait for stable attachment evidence, then wait for composer send-readiness, and never fall back to Enter.
 6. Captures the final answer and stores the run under `~/.oracle/sessions`.
 
 ## Supported model inputs

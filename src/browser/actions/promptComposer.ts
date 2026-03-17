@@ -3,7 +3,6 @@ import {
   INPUT_SELECTORS,
   PROMPT_PRIMARY_SELECTOR,
   PROMPT_FALLBACK_SELECTOR,
-  SEND_BUTTON_SELECTORS,
   CONVERSATION_TURN_SELECTOR,
   STOP_BUTTON_SELECTOR,
   ASSISTANT_ROLE_SELECTOR,
@@ -12,6 +11,13 @@ import { delay } from "../utils.js";
 import { logDomFailure } from "../domDebug.js";
 import { buildClickDispatcher } from "./domEvents.js";
 import { BrowserAutomationError } from "../../oracle/errors.js";
+import {
+  buildComposerSendClickExpression,
+  buildComposerSendReadinessExpression,
+  readComposerSendReadiness,
+  hasAttachmentCompletionEvidence,
+  summarizeComposerSendReadiness,
+} from "./composerSendReadiness.js";
 
 const ENTER_KEY_EVENT = {
   key: "Enter",
@@ -210,7 +216,7 @@ export async function sendPreparedPrompt(
   logger: BrowserLogger,
 ): Promise<number | null> {
   const { runtime, input } = deps;
-  const clicked = await attemptSendButton(runtime, logger, deps?.attachmentNames);
+  const clicked = await attemptSendButton(runtime, logger, deps?.attachmentNames, deps?.inputTimeoutMs ?? undefined);
   if (!clicked) {
     await input.dispatchKeyEvent({
       type: "keyDown",
@@ -324,96 +330,71 @@ async function waitForDomReady(
   logger?.(`Page did not reach ready/composer state within ${timeoutMs}ms; continuing cautiously.`);
 }
 
-function buildAttachmentReadyExpression(attachmentNames: string[]): string {
-  const namesLiteral = JSON.stringify(attachmentNames.map((name) => name.toLowerCase()));
-  return `(() => {
-    const names = ${namesLiteral};
-    const composer =
-      document.querySelector('[data-testid*="composer"]') ||
-      document.querySelector('form') ||
-      document.body ||
-      document;
-    const match = (node, name) => (node?.textContent || '').toLowerCase().includes(name);
-
-    // Restrict to attachment affordances; never scan generic div/span nodes (prompt text can contain the file name).
-    const attachmentSelectors = [
-      '[data-testid*="chip"]',
-      '[data-testid*="attachment"]',
-      '[data-testid*="upload"]',
-      '[aria-label="Remove file"]',
-      'button[aria-label="Remove file"]',
-    ];
-
-    const chipsReady = names.every((name) =>
-      Array.from(composer.querySelectorAll(attachmentSelectors.join(','))).some((node) => match(node, name)),
-    );
-    const inputsReady = names.every((name) =>
-      Array.from(composer.querySelectorAll('input[type="file"]')).some((el) =>
-        Array.from((el instanceof HTMLInputElement ? el.files : []) || []).some((file) =>
-          file?.name?.toLowerCase?.().includes(name),
-        ),
-      ),
-    );
-
-    return chipsReady || inputsReady;
-  })()`;
-}
-
-export function buildAttachmentReadyExpressionForTest(attachmentNames: string[]) {
-  return buildAttachmentReadyExpression(attachmentNames);
+export function buildComposerSendReadinessExpressionForTest() {
+  return buildComposerSendReadinessExpression();
 }
 
 async function attemptSendButton(
   Runtime: ChromeClient["Runtime"],
-  _logger?: BrowserLogger,
+  logger?: BrowserLogger,
   attachmentNames?: string[],
+  inputTimeoutMs?: number,
 ): Promise<boolean> {
-  const script = `(() => {
-    ${buildClickDispatcher()}
-    const selectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
-    let button = null;
-    for (const selector of selectors) {
-      button = document.querySelector(selector);
-      if (button) break;
-    }
-    if (!button) return 'missing';
-    const ariaDisabled = button.getAttribute('aria-disabled');
-    const dataDisabled = button.getAttribute('data-disabled');
-    const style = window.getComputedStyle(button);
-    const disabled =
-      button.hasAttribute('disabled') ||
-      ariaDisabled === 'true' ||
-      dataDisabled === 'true' ||
-      style.pointerEvents === 'none' ||
-      style.display === 'none';
-    // Learned: some send buttons render but are inert; only click when truly enabled.
-    if (disabled) return 'disabled';
-    // Use unified pointer/mouse sequence to satisfy React handlers.
-    dispatchClickSequence(button);
-    return 'clicked';
-  })()`;
+  const hasAttachments = Array.isArray(attachmentNames) && attachmentNames.length > 0;
+  const deadlineMs = hasAttachments
+    ? Math.max(15_000, Math.min(inputTimeoutMs ?? 30_000, 30_000))
+    : 8_000;
+  const deadline = Date.now() + deadlineMs;
+  let stableSince: number | null = null;
+  let lastLogTime = 0;
 
-  const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
-    const needAttachment = Array.isArray(attachmentNames) && attachmentNames.length > 0;
-    if (needAttachment) {
-      const ready = await Runtime.evaluate({
-        expression: buildAttachmentReadyExpression(attachmentNames),
-        returnByValue: true,
-      });
-      if (!ready?.result?.value) {
+    if (hasAttachments) {
+      const state = await readComposerSendReadiness(Runtime);
+      if (!state) {
         await delay(150);
         continue;
       }
-    }
-    const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
-    if (result.value === "clicked") {
-      return true;
-    }
-    if (result.value === "missing") {
-      break;
+
+      const hasEvidence = hasAttachmentCompletionEvidence(state, attachmentNames);
+      const stableThresholdMs = state.uploading ? 3000 : 750;
+
+      if (hasEvidence && state.state === "ready") {
+        if (stableSince === null) stableSince = Date.now();
+        if (Date.now() - stableSince > stableThresholdMs) {
+          const { result } = await Runtime.evaluate({
+            expression: buildComposerSendClickExpression(),
+            returnByValue: true,
+          });
+          if (result?.value === "clicked") return true;
+        }
+      } else {
+        stableSince = null;
+      }
+
+      if (logger?.verbose) {
+        const now = Date.now();
+        if (now - lastLogTime > 3000) {
+          lastLogTime = now;
+          logger(`Attachment send readiness: ${summarizeComposerSendReadiness(state, attachmentNames)}`);
+        }
+      }
+    } else {
+      const { result } = await Runtime.evaluate({
+        expression: buildComposerSendClickExpression(),
+        returnByValue: true,
+      });
+      if (result?.value === "clicked") return true;
+      if (result?.value === "missing") break;
     }
     await delay(100);
+  }
+
+  if (hasAttachments) {
+    throw new BrowserAutomationError(
+      "Composer never became send-ready for attachment send",
+      { stage: "submit-prompt", code: "attachment-send-not-ready" },
+    );
   }
   return false;
 }
@@ -586,4 +567,5 @@ async function verifyPromptCommitted(
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
 export const __test__ = {
   verifyPromptCommitted,
+  attemptSendButton,
 };

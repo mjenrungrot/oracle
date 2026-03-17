@@ -28,6 +28,7 @@ describe("attachment completion fallbacks", () => {
             filesAttached: true,
             attachedNames: [],
             inputNames: ["oracle-attach-verify.txt"],
+            attachmentUiCount: 0,
           },
         },
       }),
@@ -51,6 +52,7 @@ describe("attachment completion fallbacks", () => {
             filesAttached: false,
             attachedNames: [],
             inputNames: ["oracle-attach-verify.txt"],
+            attachmentUiCount: 0,
           },
         },
       }),
@@ -74,6 +76,7 @@ describe("attachment completion fallbacks", () => {
             filesAttached: true,
             attachedNames: [],
             inputNames: ["oracle-attach-verify.txt"],
+            attachmentUiCount: 0,
           },
         },
       }),
@@ -81,6 +84,56 @@ describe("attachment completion fallbacks", () => {
 
     const promise = waitForAttachmentCompletion(runtime, 10_000, ["oracle-attach-verify.txt"]);
     await vi.advanceTimersByTimeAsync(2_000);
+    await expect(promise).resolves.toBeUndefined();
+    useRealTime();
+  });
+
+  test("waitForAttachmentCompletion resolves when attachmentUiCount is stable even if button is disabled", async () => {
+    useFakeTime();
+
+    let callCount = 0;
+    const runtime = {
+      evaluate: vi.fn().mockImplementation(() => {
+        callCount += 1;
+        // First few calls: disabled button, but attachmentUiCount shows 1 chip
+        if (callCount <= 8) {
+          return Promise.resolve({
+            result: {
+              value: {
+                state: "disabled",
+                uploading: true,
+                filesAttached: true,
+                attachedNames: ["oracle-attach-verify.txt"],
+                inputNames: [],
+                fileCount: 1,
+                attachmentUiCount: 1,
+                errorDetected: false,
+                errorText: "",
+              },
+            },
+          });
+        }
+        // Later: upload completes, button becomes ready
+        return Promise.resolve({
+          result: {
+            value: {
+              state: "ready",
+              uploading: false,
+              filesAttached: true,
+              attachedNames: ["oracle-attach-verify.txt"],
+              inputNames: [],
+              fileCount: 1,
+              attachmentUiCount: 1,
+              errorDetected: false,
+              errorText: "",
+            },
+          },
+        });
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(runtime, 10_000, ["oracle-attach-verify.txt"]);
+    await vi.advanceTimersByTimeAsync(5_000);
     await expect(promise).resolves.toBeUndefined();
     useRealTime();
   });
@@ -97,6 +150,7 @@ describe("attachment completion fallbacks", () => {
             filesAttached: true,
             attachedNames: ["oracle-attach-verify.txt"],
             inputNames: [],
+            attachmentUiCount: 1,
           },
         },
       }),
@@ -121,6 +175,7 @@ describe("attachment completion fallbacks", () => {
             filesAttached: false,
             attachedNames: [],
             inputNames: [],
+            attachmentUiCount: 0,
           },
         },
       }),
@@ -148,6 +203,7 @@ describe("upload error detection", () => {
             attachedNames: [],
             inputNames: [],
             fileCount: 0,
+            attachmentUiCount: 0,
             errorDetected: true,
             errorText: "Unsupported file type",
           },
@@ -180,6 +236,7 @@ describe("upload error detection", () => {
                 attachedNames: [],
                 inputNames: [],
                 fileCount: 0,
+                attachmentUiCount: 0,
                 errorDetected: true,
                 errorText: "Can't upload this file",
               },
@@ -196,6 +253,7 @@ describe("upload error detection", () => {
               attachedNames: [],
               inputNames: [],
               fileCount: 0,
+              attachmentUiCount: 0,
               errorDetected: false,
               errorText: "",
             },
@@ -224,6 +282,7 @@ describe("upload error detection", () => {
             attachedNames: ["utils.ts"],
             inputNames: [],
             fileCount: 1,
+            attachmentUiCount: 1,
             errorDetected: true,
             errorText: "Unsupported file type",
           },
@@ -262,6 +321,7 @@ describe("upload error detection", () => {
             attachedNames: ["processing-prompt.ts", "reader-types.ts"],
             inputNames: [],
             fileCount: 2,
+            attachmentUiCount: 2,
             errorDetected: false,
             errorText: "",
           },
@@ -304,6 +364,7 @@ describe("upload error detection", () => {
             attachedNames: [],
             inputNames: [],
             fileCount: 0,
+            attachmentUiCount: 0,
             errorDetected: false,
             errorText: "",
           },

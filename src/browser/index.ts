@@ -559,7 +559,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       const baselineAssistantText =
         typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
       const attachmentNames = submissionAttachments.map((a) => path.basename(a.path));
-      let attachmentWaitTimedOut = false;
       let inputOnlyAttachments = false;
       if (submissionAttachments.length > 0) {
         if (!DOM) {
@@ -637,15 +636,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               }
             }
           } else {
-            const message = error instanceof Error ? error.message : String(error);
-            if (/Attachments did not finish uploading before timeout/i.test(message)) {
-              attachmentWaitTimedOut = true;
-              logger(
-                `[browser] Attachment upload timed out after ${Math.round(waitBudget / 1000)}s; continuing without confirmation.`,
-              );
-            } else {
-              throw error;
-            }
+            throw error;
           }
         }
       }
@@ -656,7 +647,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       let baselineTurns = await readConversationTurnCount(Runtime, logger);
       // Learned: return baselineTurns so assistant polling can ignore earlier content.
-      const sendAttachmentNames = attachmentWaitTimedOut ? [] : attachmentNames;
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
@@ -664,7 +654,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         timeoutMs: config.timeoutMs,
         inputTimeoutMs: config.inputTimeoutMs ?? undefined,
         baselineTurns: baselineTurns ?? undefined,
-        attachmentNames: sendAttachmentNames,
+        attachmentNames,
       };
       const providerCtx = {
         prompt,
@@ -683,9 +673,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         baselineTurns = providerBaselineTurns;
       }
       if (attachmentNames.length > 0) {
-        if (attachmentWaitTimedOut) {
-          logger("Attachment confirmation timed out; skipping user-turn attachment verification.");
-        } else if (inputOnlyAttachments) {
+        if (inputOnlyAttachments) {
           logger(
             "Attachment UI did not render before send; skipping user-turn attachment verification.",
           );
