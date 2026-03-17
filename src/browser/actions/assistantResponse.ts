@@ -39,6 +39,7 @@ export async function waitForAssistantResponse(
   timeoutMs: number,
   logger: BrowserLogger,
   minTurnIndex?: number,
+  expectedConversationId?: string,
 ): Promise<{
   text: string;
   html?: string;
@@ -49,7 +50,7 @@ export async function waitForAssistantResponse(
   // Learned: two paths are needed:
   // 1) DOM observer (fast when mutations fire),
   // 2) snapshot poller (fallback when observers miss or JS stalls).
-  const expression = buildResponseObserverExpression(timeoutMs, minTurnIndex);
+  const expression = buildResponseObserverExpression(timeoutMs, minTurnIndex, expectedConversationId);
   const evaluationPromise = Runtime.evaluate({
     expression,
     awaitPromise: true,
@@ -69,6 +70,7 @@ export async function waitForAssistantResponse(
     timeoutMs,
     minTurnIndex,
     pollerAbort.signal,
+    expectedConversationId,
   ).then(
     (value) => ({ kind: "poll" as const, value }),
     (error) => {
@@ -108,7 +110,7 @@ export async function waitForAssistantResponse(
       } else if (source === "poll") {
         throw error;
       } else if (source === "evaluation") {
-        const recovered = await recoverAssistantResponse(Runtime, timeoutMs, logger, minTurnIndex);
+        const recovered = await recoverAssistantResponse(Runtime, timeoutMs, logger, minTurnIndex, expectedConversationId);
         if (recovered) {
           return recovered;
         }
@@ -129,7 +131,7 @@ export async function waitForAssistantResponse(
   if (!parsed) {
     let remainingMs = Math.max(0, timeoutMs - (Date.now() - start));
     if (remainingMs > 0) {
-      const recovered = await recoverAssistantResponse(Runtime, remainingMs, logger, minTurnIndex);
+      const recovered = await recoverAssistantResponse(Runtime, remainingMs, logger, minTurnIndex, expectedConversationId);
       if (recovered) {
         return recovered;
       }
@@ -148,7 +150,7 @@ export async function waitForAssistantResponse(
     throw new Error("Unable to capture assistant response");
   }
 
-  const refreshed = await refreshAssistantSnapshot(Runtime, parsed, logger, minTurnIndex);
+  const refreshed = await refreshAssistantSnapshot(Runtime, parsed, logger, minTurnIndex, expectedConversationId);
   const candidate = refreshed ?? parsed;
   // The evaluation path can race ahead of completion. If ChatGPT is still streaming, wait for the watchdog poller.
   const elapsedMs = Date.now() - start;
@@ -160,7 +162,7 @@ export async function waitForAssistantResponse(
     ]);
     if (stopVisible) {
       logger("Assistant still generating; waiting for completion");
-      const completed = await pollAssistantCompletion(Runtime, remainingMs, minTurnIndex);
+      const completed = await pollAssistantCompletion(Runtime, remainingMs, minTurnIndex, undefined, expectedConversationId);
       if (completed) {
         return completed;
       }
@@ -175,9 +177,10 @@ export async function waitForAssistantResponse(
 export async function readAssistantSnapshot(
   Runtime: ChromeClient["Runtime"],
   minTurnIndex?: number,
+  expectedConversationId?: string,
 ): Promise<AssistantSnapshot | null> {
   const { result } = await Runtime.evaluate({
-    expression: buildAssistantSnapshotExpression(minTurnIndex),
+    expression: buildAssistantSnapshotExpression(minTurnIndex, expectedConversationId),
     returnByValue: true,
   });
   const value = result?.value;
@@ -244,6 +247,7 @@ async function recoverAssistantResponse(
   timeoutMs: number,
   logger: BrowserLogger,
   minTurnIndex?: number,
+  expectedConversationId?: string,
 ): Promise<{
   text: string;
   html?: string;
@@ -255,7 +259,7 @@ async function recoverAssistantResponse(
   }
   const recovered = await waitForCondition(
     async () => {
-      const snapshot = await readAssistantSnapshot(Runtime, minTurnIndex);
+      const snapshot = await readAssistantSnapshot(Runtime, minTurnIndex, expectedConversationId);
       return normalizeAssistantSnapshot(snapshot);
     },
     recoveryTimeoutMs,
@@ -324,6 +328,7 @@ async function refreshAssistantSnapshot(
   },
   logger: BrowserLogger,
   minTurnIndex?: number,
+  expectedConversationId?: string,
 ): Promise<{
   text: string;
   html?: string;
@@ -339,7 +344,7 @@ async function refreshAssistantSnapshot(
   const stableTarget = 3;
   while (Date.now() < deadline) {
     // Learned: short/fast answers can race; poll a few extra cycles to pick up messageId + full text.
-    const latestSnapshot = await readAssistantSnapshot(Runtime, minTurnIndex).catch(() => null);
+    const latestSnapshot = await readAssistantSnapshot(Runtime, minTurnIndex, expectedConversationId).catch(() => null);
     const latest = normalizeAssistantSnapshot(latestSnapshot);
     if (latest) {
       if (
@@ -389,6 +394,7 @@ async function pollAssistantCompletion(
   timeoutMs: number,
   minTurnIndex?: number,
   abortSignal?: AbortSignal,
+  expectedConversationId?: string,
 ): Promise<{
   text: string;
   html?: string;
@@ -403,7 +409,7 @@ async function pollAssistantCompletion(
     if (abortSignal?.aborted) {
       return null;
     }
-    const snapshot = await readAssistantSnapshot(Runtime, minTurnIndex);
+    const snapshot = await readAssistantSnapshot(Runtime, minTurnIndex, expectedConversationId);
     const normalized = normalizeAssistantSnapshot(snapshot);
     if (normalized) {
       const currentLength = normalized.text.length;
@@ -545,12 +551,15 @@ async function waitForCondition<T>(
   return null;
 }
 
-function buildAssistantSnapshotExpression(minTurnIndex?: number): string {
+function buildAssistantSnapshotExpression(minTurnIndex?: number, expectedConversationId?: string): string {
   const minTurnLiteral =
     typeof minTurnIndex === "number" && Number.isFinite(minTurnIndex) && minTurnIndex >= 0
       ? Math.floor(minTurnIndex)
       : -1;
   return `(() => {
+    const EXPECTED_CID = ${expectedConversationId ? JSON.stringify(expectedConversationId) : "null"};
+    const __conversationOk = () => !EXPECTED_CID || location.href.includes('/c/' + EXPECTED_CID);
+    if (!__conversationOk()) return null;
     const MIN_TURN_INDEX = ${minTurnLiteral};
     // Learned: the default turn DOM misses project view; keep a fallback extractor.
     ${buildAssistantExtractor("extractAssistantTurn")}
@@ -572,7 +581,7 @@ function buildAssistantSnapshotExpression(minTurnIndex?: number): string {
   })()`;
 }
 
-function buildResponseObserverExpression(timeoutMs: number, minTurnIndex?: number): string {
+function buildResponseObserverExpression(timeoutMs: number, minTurnIndex?: number, expectedConversationId?: string): string {
   const selectorsLiteral = JSON.stringify(ANSWER_SELECTORS);
   const conversationLiteral = JSON.stringify(CONVERSATION_TURN_SELECTOR);
   const assistantLiteral = JSON.stringify(ASSISTANT_ROLE_SELECTOR);
@@ -581,6 +590,8 @@ function buildResponseObserverExpression(timeoutMs: number, minTurnIndex?: numbe
       ? Math.floor(minTurnIndex)
       : -1;
   return `(() => {
+    const EXPECTED_CID = ${expectedConversationId ? JSON.stringify(expectedConversationId) : "null"};
+    const __conversationOk = () => !EXPECTED_CID || location.href.includes('/c/' + EXPECTED_CID);
     ${buildClickDispatcher()}
     const SELECTORS = ${selectorsLiteral};
     const STOP_SELECTOR = '${STOP_BUTTON_SELECTOR}';
@@ -617,6 +628,7 @@ function buildResponseObserverExpression(timeoutMs: number, minTurnIndex?: numbe
 
     const acceptSnapshot = (snapshot) => {
       if (!snapshot) return null;
+      if (!__conversationOk()) return null;
       const index = typeof snapshot.turnIndex === 'number' ? snapshot.turnIndex : -1;
       if (MIN_TURN_INDEX >= 0) {
         if (index < 0 || index < MIN_TURN_INDEX) {
