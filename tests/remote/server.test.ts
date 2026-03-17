@@ -45,10 +45,10 @@ describe("remote browser service", () => {
           runBrowser: async (options) => {
             runLog.push(options.prompt);
             expect(options.attachments).toHaveLength(1);
-            expect(options.config.manualLogin).toBe(true);
-            expect(options.config.manualLoginProfileDir).toBe("/tmp/oracle-browser-profile");
-            expect(options.config.cookieSync).toBe(false);
-            expect(options.config.keepBrowser).toBe(true);
+            expect(options.config?.manualLogin).toBe(true);
+            expect(options.config?.manualLoginProfileDir).toBe("/tmp/oracle-browser-profile");
+            expect(options.config?.cookieSync).toBe(false);
+            expect(options.config?.keepBrowser).toBe(true);
             const attachment = options.attachments?.[0];
             if (!attachment) {
               throw new Error("missing attachment");

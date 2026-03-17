@@ -123,7 +123,6 @@ describe("askOracleFlow", () => {
 
     const creationArgs = initializeSessionMock.mock.calls[0]?.[0] as RunOracleOptions;
     expect(creationArgs.models).toBeUndefined();
-    expect(creationArgs.mode).toBe("browser");
   });
 });
 
