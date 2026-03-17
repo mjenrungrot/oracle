@@ -1631,6 +1631,20 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
     return;
   }
 
+  // Reuse the previous conversation URL so the restarted session continues in
+  // the same ChatGPT thread (preserves context from the prior run).
+  const previousRuntime = metadata.browser?.runtime;
+  if (previousRuntime?.conversationId || previousRuntime?.tabUrl) {
+    const conversationUrl =
+      previousRuntime.tabUrl && previousRuntime.tabUrl.includes("/c/")
+        ? previousRuntime.tabUrl
+        : null;
+    if (conversationUrl && !browserConfig.chatgptUrl) {
+      browserConfig.chatgptUrl = conversationUrl;
+      console.log(chalk.dim(`Continuing in previous ChatGPT conversation: ${conversationUrl}`));
+    }
+  }
+
   const userConfig = (await loadUserConfig()).config;
   const cwd = metadata.cwd ?? process.cwd();
   const storedOptions = metadata.options ?? {};

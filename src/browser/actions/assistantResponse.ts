@@ -763,7 +763,11 @@ function buildResponseObserverExpression(timeoutMs: number, minTurnIndex?: numbe
         const stopVisible = Boolean(document.querySelector(STOP_SELECTOR));
         const finishedVisible = isLastAssistantTurnFinished();
 
-        if (finishedVisible || (!stopVisible && stableCycles >= stableTarget)) {
+        // Guard finishedVisible behind !stopVisible: thinking-model turns can show
+        // action buttons (copy/thumbs) on the "thinking" section while the actual
+        // answer is still streaming.  Without the guard, the observer exits early
+        // and captures only the first paragraph.
+        if (!stopVisible && (finishedVisible || stableCycles >= stableTarget)) {
           break;
         }
       }

@@ -237,6 +237,16 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       if (hint) {
         logger(hint);
       }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("ECONNREFUSED")) {
+        throw new BrowserAutomationError(
+          "Could not connect to Chrome DevTools. " +
+            "This usually means Chrome is already running without the required DevTools Protocol flags. " +
+            "Quit Chrome completely and retry.",
+          { stage: "chrome-connection", runtime: { chromePort: chrome.port, chromeHost } },
+          error instanceof Error ? error : undefined,
+        );
+      }
       throw error;
     }
     const disconnectPromise = new Promise<never>((_, reject) => {
@@ -1186,10 +1196,9 @@ async function maybeRecoverLongAssistantResponse({
 }): Promise<{ answerText: string; answerMarkdown: string }> {
   // Learned: long streaming responses can still be rendering after initial capture.
   // Add a brief delay and re-poll to catch any additional content (#71).
+  // Always attempt recovery — thinking models can truncate at any length when the
+  // observer exits early (e.g. 208 chars of a multi-thousand-char response).
   const capturedLength = answerText.trim().length;
-  if (capturedLength <= 500) {
-    return { answerText, answerMarkdown };
-  }
 
   await delay(1500);
   let bestLength = capturedLength;
