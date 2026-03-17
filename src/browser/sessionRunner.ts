@@ -7,6 +7,7 @@ import { runBrowserMode } from "../browserMode.js";
 import type { BrowserRunResult } from "../browserMode.js";
 import { assembleBrowserPrompt } from "./prompt.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
+import { extractConversationIdFromUrl } from "./reattachHelpers.js";
 import type { BrowserLogger } from "./types.js";
 
 export interface BrowserExecutionResult {
@@ -89,7 +90,7 @@ function createAutomationLogger(
 ): BrowserLogger {
   const automationLogger: BrowserLogger = ((message?: string) => {
     if (typeof message !== "string") return;
-    const shouldAlwaysPrint = message.startsWith("[browser] ") && /fallback|retry/i.test(message);
+    const shouldAlwaysPrint = message.startsWith("[browser] ") && /fallback|retry|rejected|re-uploading/i.test(message);
     if (!runOptions.verbose && !shouldAlwaysPrint) return;
     log(message);
   }) as BrowserLogger;
@@ -189,6 +190,11 @@ export async function runBrowserSessionExecution(
       chromePort: browserResult.chromePort,
       chromeHost: browserResult.chromeHost,
       userDataDir: browserResult.userDataDir,
+      chromeTargetId: browserResult.chromeTargetId,
+      tabUrl: browserResult.tabUrl,
+      conversationId: browserResult.tabUrl
+        ? extractConversationIdFromUrl(browserResult.tabUrl)
+        : undefined,
       controllerPid: browserResult.controllerPid ?? process.pid,
     },
     answerText,

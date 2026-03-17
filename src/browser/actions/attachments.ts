@@ -4,11 +4,24 @@ import {
   CONVERSATION_TURN_SELECTOR,
   INPUT_SELECTORS,
   SEND_BUTTON_SELECTORS,
+  UPLOAD_ERROR_SELECTORS,
+  UPLOAD_ERROR_TEXT_PATTERNS,
   UPLOAD_STATUS_SELECTORS,
 } from "../constants.js";
 import { delay } from "../utils.js";
 import { logDomFailure } from "../domDebug.js";
 import { transferAttachmentViaDataTransfer } from "./attachmentDataTransfer.js";
+
+export class AttachmentUploadError extends Error {
+  readonly failedFiles: string[];
+  readonly errorText: string;
+  constructor(message: string, failedFiles: string[], errorText = "") {
+    super(message);
+    this.name = "AttachmentUploadError";
+    this.failedFiles = failedFiles;
+    this.errorText = errorText;
+  }
+}
 
 export async function uploadAttachmentFile(
   deps: {
@@ -18,12 +31,13 @@ export async function uploadAttachmentFile(
   },
   attachment: BrowserAttachment,
   logger: BrowserLogger,
-  options?: { expectedCount?: number },
+  options?: { expectedCount?: number; skipPresenceCheck?: boolean },
 ): Promise<boolean> {
   const { runtime, dom, input } = deps;
   if (!dom) {
     throw new Error("DOM domain unavailable while uploading attachments.");
   }
+  const skipPresenceCheck = options?.skipPresenceCheck === true;
   const expectedCount =
     typeof options?.expectedCount === "number" && Number.isFinite(options.expectedCount)
       ? Math.max(0, Math.floor(options.expectedCount))
@@ -392,9 +406,29 @@ export async function uploadAttachmentFile(
   const initialSignals = await readAttachmentSignals(expectedName);
   let inputConfirmed = false;
 
-  if (initialSignals.ui) {
-    logger(`Attachment already present: ${path.basename(attachment.path)}`);
-    return true;
+  if (!skipPresenceCheck) {
+    if (initialSignals.ui) {
+      logger(`Attachment already present: ${path.basename(attachment.path)}`);
+      return true;
+    }
+    const initialInputSatisfied =
+      expectedCount > 0
+        ? initialSignals.inputCount >= expectedCount
+        : Boolean(initialSignals.input);
+    if (
+      expectedCount > 0 &&
+      (initialSignals.fileCount >= expectedCount || initialSignals.inputCount >= expectedCount)
+    ) {
+      const satisfiedCount = Math.max(initialSignals.fileCount, initialSignals.inputCount);
+      logger(
+        `Attachment already present: composer shows ${satisfiedCount} file${satisfiedCount === 1 ? "" : "s"}`,
+      );
+      return true;
+    }
+    if (initialInputSatisfied || initialSignals.input) {
+      logger(`Attachment already queued in file input: ${path.basename(attachment.path)}`);
+      return true;
+    }
   }
   const isExpectedSatisfied = (signals: {
     fileCount?: number;
@@ -407,22 +441,6 @@ export async function uploadAttachmentFile(
     if (fileCount >= expectedCount) return true;
     return Boolean(signals.ui && chipCount >= expectedCount);
   };
-  const initialInputSatisfied =
-    expectedCount > 0 ? initialSignals.inputCount >= expectedCount : Boolean(initialSignals.input);
-  if (
-    expectedCount > 0 &&
-    (initialSignals.fileCount >= expectedCount || initialSignals.inputCount >= expectedCount)
-  ) {
-    const satisfiedCount = Math.max(initialSignals.fileCount, initialSignals.inputCount);
-    logger(
-      `Attachment already present: composer shows ${satisfiedCount} file${satisfiedCount === 1 ? "" : "s"}`,
-    );
-    return true;
-  }
-  if (initialInputSatisfied || initialSignals.input) {
-    logger(`Attachment already queued in file input: ${path.basename(attachment.path)}`);
-    return true;
-  }
 
   const documentNode = await dom.getDocument();
   const candidateSetup = await runtime.evaluate({
@@ -1339,6 +1357,10 @@ export async function waitForAttachmentCompletion(
   let sawInputMatch = false;
   let attachmentMatchSince: number | null = null;
   let lastVerboseLog = 0;
+  let sawError = false;
+  let errorSince: number | null = null;
+  let lastErrorText = "";
+  let partialSince: number | null = null;
   const expression = `(() => {
     const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
     const promptSelectors = ${JSON.stringify(INPUT_SELECTORS)};
@@ -1537,6 +1559,46 @@ export async function waitForAttachmentCompletion(
       fileCount = collectFileCount(Array.from(document.querySelectorAll(fileCountSelectors)));
     }
     const filesAttached = attachedNames.length > 0 || fileCount > 0;
+
+    // --- Upload error detection ---
+    const errorSelectors = ${JSON.stringify(UPLOAD_ERROR_SELECTORS)};
+    const errorPatterns = [
+      /unsupported\\s+file/i, /upload\\s+fail/i, /can['\\u2019]?t\\s+upload/i,
+      /unable\\s+to\\s+upload/i, /file\\s+type.*not\\s+(?:supported|allowed)/i,
+      /error\\s+uploading/i, /couldn['\\u2019]?t\\s+(?:upload|attach)/i,
+      /not\\s+(?:a\\s+)?supported/i,
+    ];
+    let errorDetected = false;
+    let errorText = '';
+    for (const selector of errorSelectors) {
+      for (const el of Array.from(document.querySelectorAll(selector))) {
+        const elText = (el.textContent || '').trim();
+        if (!elText) continue;
+        for (const pattern of errorPatterns) {
+          if (pattern.test(elText)) {
+            errorDetected = true;
+            errorText = elText;
+            break;
+          }
+        }
+        if (errorDetected) break;
+      }
+      if (errorDetected) break;
+    }
+    if (!errorDetected) {
+      for (const selector of attachmentChipSelectors) {
+        for (const node of Array.from(composerScope.querySelectorAll(selector))) {
+          const ds = node.getAttribute?.('data-state') ?? '';
+          if (ds === 'error' || ds === 'failed') {
+            errorDetected = true;
+            errorText = (node.textContent || '').trim() || 'Attachment ' + ds;
+            break;
+          }
+        }
+        if (errorDetected) break;
+      }
+    }
+
     return {
       state: button ? (disabled ? 'disabled' : 'ready') : 'missing',
       uploading,
@@ -1544,6 +1606,8 @@ export async function waitForAttachmentCompletion(
       attachedNames,
       inputNames,
       fileCount,
+      errorDetected,
+      errorText,
     };
   })()`;
   while (Date.now() < deadline) {
@@ -1557,6 +1621,8 @@ export async function waitForAttachmentCompletion(
           attachedNames?: string[];
           inputNames?: string[];
           fileCount?: number;
+          errorDetected?: boolean;
+          errorText?: string;
         }
       | undefined;
     if (!value && logger?.verbose) {
@@ -1583,10 +1649,40 @@ export async function waitForAttachmentCompletion(
               attachedNames: (value.attachedNames ?? []).slice(0, 3),
               inputNames: (value.inputNames ?? []).slice(0, 3),
               fileCount: value.fileCount ?? 0,
+              errorDetected: value.errorDetected ?? false,
             })}`,
           );
         }
       }
+
+      // --- Upload error detection (sticky) ---
+      if (value.errorDetected) {
+        sawError = true;
+        lastErrorText = value.errorText || lastErrorText || "Upload error detected";
+        if (errorSince === null) {
+          errorSince = Date.now();
+        }
+      }
+      if (sawError && errorSince !== null && Date.now() - errorSince > 500) {
+        // Identify which expected files are NOT successfully attached
+        const successfullyAttached = (value.attachedNames ?? [])
+          .map((n) => n.toLowerCase().replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+        const failedFiles = expectedNames.filter((expected) => {
+          const baseName = (expected.split("/").pop()?.split("\\").pop() ?? expected).toLowerCase();
+          const baseNoExt = baseName.replace(/\.[a-z0-9]{1,10}$/i, "");
+          return !successfullyAttached.some(
+            (raw) =>
+              raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
+          );
+        });
+        throw new AttachmentUploadError(
+          `Upload error detected: ${lastErrorText}`,
+          failedFiles.length > 0 ? failedFiles : expectedNames,
+          lastErrorText,
+        );
+      }
+
       const attachedNames = (value.attachedNames ?? [])
         .map((name) => name.toLowerCase().replace(/\s+/g, " ").trim())
         .filter(Boolean);
@@ -1674,6 +1770,39 @@ export async function waitForAttachmentCompletion(
       }
       if (!inputSeenNow && !sawInputMatch) {
         inputMatchSince = null;
+      }
+
+      // --- Silent rejection detection ---
+      // ChatGPT silently drops unsupported file types (e.g. .tsx) with no error UI.
+      // Detect: expected files are consistently missing, button is ready, not uploading.
+      // Covers both partial (some files attached) and total (no files attached) rejection.
+      if (
+        missing.length > 0 &&
+        value.state === "ready" &&
+        !value.uploading
+      ) {
+        if (partialSince === null) {
+          partialSince = Date.now();
+        }
+        if (Date.now() - partialSince > 3000) {
+          const failedFiles = expectedNames.filter((name) => {
+            const baseName = (name.split("/").pop()?.split("\\").pop() ?? name).toLowerCase();
+            const baseNoExt = baseName.replace(/\.[a-z0-9]{1,10}$/i, "");
+            return !attachedNames.some(
+              (raw) =>
+                raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
+            );
+          });
+          if (failedFiles.length > 0) {
+            throw new AttachmentUploadError(
+              `ChatGPT silently rejected ${failedFiles.length} file(s): ${failedFiles.join(", ")}`,
+              failedFiles,
+              "Files were silently dropped by ChatGPT (unsupported file type)",
+            );
+          }
+        }
+      } else {
+        partialSince = null;
       }
     }
     await delay(250);

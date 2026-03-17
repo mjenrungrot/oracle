@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+  AttachmentUploadError,
   waitForAttachmentCompletion,
   waitForUserTurnAttachments,
 } from "../../src/browser/pageActions.js";
@@ -129,6 +130,203 @@ describe("attachment completion fallbacks", () => {
     const assertion = expect(promise).rejects.toThrow(/did not finish uploading/i);
     await vi.advanceTimersByTimeAsync(2_000);
     await assertion;
+    useRealTime();
+  });
+});
+
+describe("upload error detection", () => {
+  test("throws AttachmentUploadError when errorDetected is true", async () => {
+    useFakeTime();
+
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "ready",
+            uploading: false,
+            filesAttached: false,
+            attachedNames: [],
+            inputNames: [],
+            fileCount: 0,
+            errorDetected: true,
+            errorText: "Unsupported file type",
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(runtime, 10_000, ["component.tsx"]);
+    const assertion = expect(promise).rejects.toThrow(AttachmentUploadError);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await assertion;
+    useRealTime();
+  });
+
+  test("sticky error flag: error detected once persists even if toast disappears", async () => {
+    useFakeTime();
+
+    let callCount = 0;
+    const runtime = {
+      evaluate: vi.fn().mockImplementation(() => {
+        callCount += 1;
+        // First two calls: error visible
+        if (callCount <= 2) {
+          return Promise.resolve({
+            result: {
+              value: {
+                state: "ready",
+                uploading: false,
+                filesAttached: false,
+                attachedNames: [],
+                inputNames: [],
+                fileCount: 0,
+                errorDetected: true,
+                errorText: "Can't upload this file",
+              },
+            },
+          });
+        }
+        // Subsequent calls: toast gone, no error in DOM
+        return Promise.resolve({
+          result: {
+            value: {
+              state: "ready",
+              uploading: false,
+              filesAttached: false,
+              attachedNames: [],
+              inputNames: [],
+              fileCount: 0,
+              errorDetected: false,
+              errorText: "",
+            },
+          },
+        });
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(runtime, 10_000, ["component.tsx"]);
+    const assertion = expect(promise).rejects.toThrow(AttachmentUploadError);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await assertion;
+    useRealTime();
+  });
+
+  test("partial success: failedFiles contains only missing files", async () => {
+    useFakeTime();
+
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "ready",
+            uploading: false,
+            filesAttached: true,
+            attachedNames: ["utils.ts"],
+            inputNames: [],
+            fileCount: 1,
+            errorDetected: true,
+            errorText: "Unsupported file type",
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(runtime, 10_000, ["utils.ts", "component.tsx"]);
+    // Attach a no-op catch to prevent unhandled rejection warning before advancing timers
+    promise.catch(() => {});
+    await vi.advanceTimersByTimeAsync(2_000);
+    try {
+      await promise;
+      throw new Error("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AttachmentUploadError);
+      const uploadError = error as AttachmentUploadError;
+      expect(uploadError.failedFiles).toEqual(["component.tsx"]);
+      expect(uploadError.failedFiles).not.toContain("utils.ts");
+      expect(uploadError.errorText).toBe("Unsupported file type");
+    }
+    useRealTime();
+  });
+
+  test("silent rejection: detects files silently dropped by ChatGPT (no error UI)", async () => {
+    useFakeTime();
+
+    // ChatGPT accepts .ts files but silently drops .tsx — no error toast, no alert
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "ready",
+            uploading: false,
+            filesAttached: true,
+            attachedNames: ["processing-prompt.ts", "reader-types.ts"],
+            inputNames: [],
+            fileCount: 2,
+            errorDetected: false,
+            errorText: "",
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(
+      runtime,
+      30_000,
+      ["processing-prompt.ts", "processing-page.tsx", "reader-types.ts"],
+    );
+    promise.catch(() => {});
+    // Need 3s+ stability window for silent rejection detection
+    await vi.advanceTimersByTimeAsync(5_000);
+    try {
+      await promise;
+      throw new Error("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AttachmentUploadError);
+      const uploadError = error as AttachmentUploadError;
+      expect(uploadError.failedFiles).toEqual(["processing-page.tsx"]);
+      expect(uploadError.failedFiles).not.toContain("processing-prompt.ts");
+      expect(uploadError.failedFiles).not.toContain("reader-types.ts");
+      expect(uploadError.message).toMatch(/silently rejected/i);
+    }
+    useRealTime();
+  });
+
+  test("silent rejection: detects when ALL files are silently dropped (zero attached)", async () => {
+    useFakeTime();
+
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "ready",
+            uploading: false,
+            filesAttached: false,
+            attachedNames: [],
+            inputNames: [],
+            fileCount: 0,
+            errorDetected: false,
+            errorText: "",
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(
+      runtime,
+      30_000,
+      ["processing-page.tsx", "context-bridge-card.tsx"],
+    );
+    promise.catch(() => {});
+    await vi.advanceTimersByTimeAsync(5_000);
+    try {
+      await promise;
+      throw new Error("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AttachmentUploadError);
+      const uploadError = error as AttachmentUploadError;
+      expect(uploadError.failedFiles).toEqual(["processing-page.tsx", "context-bridge-card.tsx"]);
+      expect(uploadError.message).toMatch(/silently rejected/i);
+    }
     useRealTime();
   });
 });

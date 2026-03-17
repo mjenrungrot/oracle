@@ -69,6 +69,24 @@ export const UPLOAD_STATUS_SELECTORS = [
   '[aria-live="assertive"]',
 ];
 
+export const UPLOAD_ERROR_SELECTORS = [
+  '[data-testid*="toast"]',
+  '[role="alert"]',
+  '[data-state="error"]',
+  '[aria-invalid="true"]',
+];
+
+export const UPLOAD_ERROR_TEXT_PATTERNS = [
+  /unsupported\s+file/i,
+  /upload\s+fail/i,
+  /can['']?t\s+upload/i,
+  /unable\s+to\s+upload/i,
+  /file\s+type.*not\s+(?:supported|allowed)/i,
+  /error\s+uploading/i,
+  /couldn['']?t\s+(?:upload|attach)/i,
+  /not\s+(?:a\s+)?supported/i,
+];
+
 export const STOP_BUTTON_SELECTOR = '[data-testid="stop-button"]';
 export const SEND_BUTTON_SELECTORS = [
   'button[data-testid="send-button"]',

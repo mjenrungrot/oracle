@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, copyFile, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import net from "node:net";
@@ -31,6 +31,7 @@ import {
   clearPromptComposer,
   waitForAssistantResponse,
   captureAssistantMarkdown,
+  AttachmentUploadError,
   clearComposerAttachments,
   uploadAttachmentFile,
   waitForAttachmentCompletion,
@@ -38,6 +39,7 @@ import {
   readAssistantSnapshot,
 } from "./pageActions.js";
 import { INPUT_SELECTORS } from "./constants.js";
+import { isMediaFile } from "./prompt.js";
 import { uploadAttachmentViaDataTransfer } from "./actions/remoteFileTransfer.js";
 import { ensureThinkingTime } from "./actions/thinkingTime.js";
 import { estimateTokenCount, withRetries, delay } from "./utils.js";
@@ -63,6 +65,14 @@ import { chatgptDomProvider } from "./providers/index.js";
 export type { BrowserAutomationConfig, BrowserRunOptions, BrowserRunResult } from "./types.js";
 export { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "./constants.js";
 export { parseDuration, delay, normalizeChatgptUrl, isTemporaryChatUrl } from "./utils.js";
+
+/** Map rejected file extensions to ones ChatGPT accepts (avoid .txt — it gets inlined). */
+function getFallbackFileName(original: string): string {
+  const ext = path.extname(original).toLowerCase();
+  const base = original.replace(/\.[^.]+$/, "");
+  const map: Record<string, string> = { ".tsx": ".ts", ".jsx": ".js" };
+  return base + (map[ext] ?? ".ts");
+}
 
 function isCloudflareChallengeError(error: unknown): error is BrowserAutomationError {
   if (!(error instanceof BrowserAutomationError)) return false;
@@ -538,7 +548,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           if (!uiConfirmed) {
             inputOnlyAttachments = true;
           }
-          await delay(500);
+          await delay(1500);
         }
         // Scale timeout based on number of files: base 45s + 20s per additional file.
         const baseTimeout = config.inputTimeoutMs ?? 30_000;
@@ -549,17 +559,67 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           await waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger);
           logger("All attachments uploaded");
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (/Attachments did not finish uploading before timeout/i.test(message)) {
-            attachmentWaitTimedOut = true;
-            logger(
-              `[browser] Attachment upload timed out after ${Math.round(waitBudget / 1000)}s; continuing without confirmation.`,
-            );
+          if (error instanceof AttachmentUploadError) {
+            // Clear stale file input state before re-uploading with accepted extension
+            await clearComposerAttachments(Runtime, 3_000, logger).catch(() => {});
+            // Fallback: copy rejected files with accepted extension and re-upload
+            for (const failedName of error.failedFiles) {
+              const matchingAttachment = submissionAttachments.find(
+                (a) => path.basename(a.path) === failedName,
+              );
+              if (!matchingAttachment) continue;
+              if (isMediaFile(matchingAttachment.path)) {
+                logger(
+                  `[browser] Upload failed for ${failedName}; cannot convert binary/media file.`,
+                );
+                continue;
+              }
+              try {
+                const tmpDir = await mkdtemp(path.join(os.tmpdir(), "oracle-txt-fallback-"));
+                const txtName = getFallbackFileName(failedName);
+                const txtPath = path.join(tmpDir, txtName);
+                await copyFile(matchingAttachment.path, txtPath);
+                const stats = await stat(txtPath);
+                const txtAttachment = {
+                  path: txtPath,
+                  displayPath: txtName,
+                  sizeBytes: stats.size,
+                };
+                logger(
+                  `[browser] Upload rejected for ${failedName}; re-uploading as ${txtName}`,
+                );
+                await uploadAttachmentViaDataTransfer(
+                  { runtime: Runtime, dom: DOM! },
+                  txtAttachment,
+                  logger,
+                );
+                // Replace the attachment name so downstream verification uses the .txt name
+                const idx = attachmentNames.indexOf(failedName);
+                if (idx !== -1) attachmentNames[idx] = txtName;
+              } catch (fallbackErr) {
+                logger(
+                  `[browser] Upload failed for ${failedName} and fallback re-upload also failed: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+                );
+              }
+            }
           } else {
-            throw error;
+            const message = error instanceof Error ? error.message : String(error);
+            if (/Attachments did not finish uploading before timeout/i.test(message)) {
+              attachmentWaitTimedOut = true;
+              logger(
+                `[browser] Attachment upload timed out after ${Math.round(waitBudget / 1000)}s; continuing without confirmation.`,
+              );
+            } else {
+              throw error;
+            }
           }
         }
       }
+      // Clear any stale text in the composer before typing the prompt.
+      // fillPromptComposer uses Input.insertText (append), so leftover text
+      // from ChatGPT draft restoration or prior runs would corrupt the prompt.
+      await clearPromptComposer(Runtime, logger);
+      await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       let baselineTurns = await readConversationTurnCount(Runtime, logger);
       // Learned: return baselineTurns so assistant polling can ignore earlier content.
       const sendAttachmentNames = attachmentWaitTimedOut ? [] : attachmentNames;
@@ -1435,8 +1495,56 @@ async function runRemoteBrowserMode(
         const perFileTimeout = 15_000;
         const waitBudget =
           Math.max(baseTimeout, 30_000) + (submissionAttachments.length - 1) * perFileTimeout;
-        await waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger);
-        logger("All attachments uploaded");
+        try {
+          await waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger);
+          logger("All attachments uploaded");
+        } catch (error) {
+          if (error instanceof AttachmentUploadError) {
+            // Clear stale file input state before re-uploading with accepted extension
+            await clearComposerAttachments(Runtime, 3_000, logger).catch(() => {});
+            // Fallback: copy rejected files with accepted extension and re-upload
+            for (const failedName of error.failedFiles) {
+              const matchingAttachment = submissionAttachments.find(
+                (a) => path.basename(a.path) === failedName,
+              );
+              if (!matchingAttachment) continue;
+              if (isMediaFile(matchingAttachment.path)) {
+                logger(
+                  `[browser] Upload failed for ${failedName}; cannot convert binary/media file.`,
+                );
+                continue;
+              }
+              try {
+                const tmpDir = await mkdtemp(path.join(os.tmpdir(), "oracle-txt-fallback-"));
+                const txtName = getFallbackFileName(failedName);
+                const txtPath = path.join(tmpDir, txtName);
+                await copyFile(matchingAttachment.path, txtPath);
+                const stats = await stat(txtPath);
+                const txtAttachment = {
+                  path: txtPath,
+                  displayPath: txtName,
+                  sizeBytes: stats.size,
+                };
+                logger(
+                  `[browser] Upload rejected for ${failedName}; re-uploading as ${txtName}`,
+                );
+                await uploadAttachmentViaDataTransfer(
+                  { runtime: Runtime, dom: DOM! },
+                  txtAttachment,
+                  logger,
+                );
+                const idx = attachmentNames.indexOf(failedName);
+                if (idx !== -1) attachmentNames[idx] = txtName;
+              } catch (fallbackErr) {
+                logger(
+                  `[browser] Upload failed for ${failedName} and fallback re-upload also failed: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+                );
+              }
+            }
+          } else {
+            throw error;
+          }
+        }
       }
       let baselineTurns = await readConversationTurnCount(Runtime, logger);
       const providerState: Record<string, unknown> = {
