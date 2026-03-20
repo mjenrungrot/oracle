@@ -1,11 +1,11 @@
 ---
 name: oracle
-description: Use your Oracle CLI command to bundle a prompt plus the right files and get a browser-only ChatGPT second-model review for debugging, refactors, design checks, or cross-validation.
+description: Use your Oracle CLI command either to run a browser-only ChatGPT second-model review or to generate a copy/paste-ready Oracle prompt bundle for manual handoff.
 ---
 
 # Oracle (CLI) — best use
 
-Oracle bundles your prompt + selected files into one "one-shot" request, opens ChatGPT in a browser, and submits it to GPT-5.4 Pro (the default model). Browser-only. Treat outputs as advisory: verify against the codebase + tests.
+Oracle bundles your prompt + selected files into one "one-shot" request. In the default `auto` mode, it opens ChatGPT in a browser and submits to GPT-5.4 Pro (the default model). In `manual` mode, the skill prepares the same bundle for a manual handoff and saves it to `./oracle_prompt.md` instead. Treat outputs as advisory: verify against the codebase + tests.
 
 ## Command
 
@@ -21,7 +21,46 @@ For long prompts, pass a file path to `-p`:
 pnpm run oracle -- -p prompt.md --file "src/**"
 ```
 
-## Workflow
+## Modes
+
+### `auto` (default)
+
+Use this mode unless the user explicitly asks for a manual/copy-paste handoff. Behavior stays the same as today: Oracle assembles the prompt bundle, opens ChatGPT in a browser, and either previews, dry-runs, or submits the request.
+
+Choose `auto` when the user says things like:
+
+- "use oracle normally"
+- "run oracle"
+- "get a second-model review"
+- "open ChatGPT and send it"
+
+### `manual`
+
+Use this mode only when the user explicitly wants a manual handoff, for example:
+
+- "manual"
+- "manual paste"
+- "copy/paste"
+- "no browser"
+- "save the Oracle prompt to a file"
+
+In `manual` mode:
+
+- Gather the same prompt, file selection, and constraints you would use for `auto`.
+- If Oracle CLI is available, use Oracle's existing render-only path as the source of truth for bundle structure and content.
+- If Oracle CLI is not available, construct the prompt manually using the same Oracle prompt rules, then append the selected file contents to the markdown file manually in the same overall order: system context, user request, then file sections.
+- Save the Oracle-style markdown bundle to `./oracle_prompt.md` in the active workspace/repo root.
+- Overwrite any existing `./oracle_prompt.md`; do not create numbered variants.
+- Do not launch Chrome, open ChatGPT, or submit anything.
+- Tell the user that `./oracle_prompt.md` is ready to copy/paste.
+
+Implementation note for Codex agents:
+
+- Prefer Oracle's render-only flow to verify the exact bundle shape, but write only the markdown bundle to `./oracle_prompt.md`.
+- If Oracle CLI is unavailable, manually write a clean markdown bundle that follows the same Oracle structure and append file contents directly into that file.
+- Do not redirect raw CLI stdout straight into the file, because CLI headlines or warnings are not part of the prompt bundle.
+
+## Auto Workflow
 
 ### Step 1: Preview locally (no browser, no submission)
 
@@ -80,7 +119,11 @@ oracle status --hours 72
 oracle session <id> --render
 ```
 
-## Manual paste fallback
+## Manual handoff
+
+When the user explicitly wants a manual/copy-paste workflow, the skill should prefer `manual` mode and write `./oracle_prompt.md`.
+
+The Oracle CLI still has a human-facing render/copy fallback if you want the assembled bundle printed or copied directly instead of saving `oracle_prompt.md`:
 
 Build the bundle, print it, and copy to clipboard for manual paste into ChatGPT:
 
@@ -89,6 +132,14 @@ pnpm run oracle -- --render --copy -p "<task>" --file "src/**"
 ```
 
 Note: `--copy` is a hidden alias for `--copy-markdown`.
+
+Keep the responsibilities distinct:
+
+- `--preview` inspects the planned request without launching a browser.
+- `--dry-run` opens ChatGPT and pre-fills the composer, but does not send.
+- `--render` / `--copy` expose the assembled bundle for humans.
+- `manual` is the skill-level workflow that saves that same bundle to `./oracle_prompt.md` without opening the browser.
+- If Oracle CLI is unavailable, `manual` falls back to writing the bundle directly and appending file contents into `./oracle_prompt.md` itself.
 
 ## Attaching files (`--file`)
 

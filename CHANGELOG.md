@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Skills: document two Oracle skill modes: `auto` keeps the existing browser-submission workflow, while `manual` is an explicit handoff path that saves `./oracle_prompt.md` for copy/paste without launching ChatGPT and falls back to constructing the bundle directly if the Oracle CLI is unavailable.
+
 ## 0.9.0 — 2026-03-08
 
 ### Changed
