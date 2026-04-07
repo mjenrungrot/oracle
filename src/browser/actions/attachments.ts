@@ -4,7 +4,6 @@ import {
   CONVERSATION_TURN_SELECTOR,
   INPUT_SELECTORS,
   SEND_BUTTON_SELECTORS,
-  UPLOAD_ERROR_SELECTORS,
   UPLOAD_STATUS_SELECTORS,
 } from "../constants.js";
 import { delay } from "../utils.js";
@@ -13,7 +12,6 @@ import { transferAttachmentViaDataTransfer } from "./attachmentDataTransfer.js";
 import {
   readComposerSendReadiness,
   evaluateComposerAttachmentEvidence,
-  hasAttachmentCompletionEvidence,
 } from "./composerSendReadiness.js";
 
 export class AttachmentUploadError extends Error {
@@ -1405,8 +1403,7 @@ export async function waitForAttachmentCompletion(
         const baseName = (expected.split("/").pop()?.split("\\").pop() ?? expected).toLowerCase();
         const baseNoExt = baseName.replace(/\.[a-z0-9]{1,10}$/i, "");
         return !successfullyAttached.some(
-          (raw) =>
-            raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
+          (raw) => raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
         );
       });
       throw new AttachmentUploadError(
@@ -1440,11 +1437,7 @@ export async function waitForAttachmentCompletion(
     }
 
     // --- Silent rejection detection ---
-    if (
-      evidence.missingNames.length > 0 &&
-      state.state === "ready" &&
-      !state.uploading
-    ) {
+    if (evidence.missingNames.length > 0 && state.state === "ready" && !state.uploading) {
       if (partialSince === null) {
         partialSince = Date.now();
       }
@@ -1456,8 +1449,7 @@ export async function waitForAttachmentCompletion(
             .map((n) => n.toLowerCase().replace(/\s+/g, " ").trim())
             .filter(Boolean);
           return !attachedNames.some(
-            (raw) =>
-              raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
+            (raw) => raw.includes(baseName) || (baseNoExt.length >= 6 && raw.includes(baseNoExt)),
           );
         });
         if (failedFiles.length > 0) {

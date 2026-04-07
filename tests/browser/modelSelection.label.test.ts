@@ -18,4 +18,13 @@ describe("browser model selection arbitrary labels", () => {
     const { labelTokens } = buildModelMatchersLiteralForTest("Thinking");
     expectSome(labelTokens, (t) => t.includes("thinking"));
   });
+
+  it("maps Extended Pro to the current Pro testids", () => {
+    const { labelTokens, testIdTokens } = buildModelMatchersLiteralForTest("Extended Pro");
+    expectSome(labelTokens, (t) => t.includes("research grade"));
+    expectSome(
+      testIdTokens,
+      (t) => t.includes("model-switcher-gpt-5-4-pro") || t.includes("gpt-5-4-pro"),
+    );
+  });
 });

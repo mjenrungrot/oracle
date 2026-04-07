@@ -590,6 +590,12 @@ program
   .addOption(new Option("--browser-headless", "Launch Chrome in headless mode.").hideHelp())
   .addOption(
     new Option(
+      "--browser-manual-login-profile-dir <path>",
+      "Persistent Chrome profile directory to reuse for manual ChatGPT login.",
+    ).hideHelp(),
+  )
+  .addOption(
+    new Option(
       "--browser-hide-window",
       "Hide the Chrome window after launch (macOS headful only).",
     ).hideHelp(),

@@ -29,6 +29,30 @@ afterAll(async () => {
   setOracleHomeDirOverrideForTest(null);
 });
 
+async function listenOnLoopback(server: ReturnType<typeof createServer>): Promise<number | null> {
+  return await new Promise((resolve, reject) => {
+    const cleanup = () => {
+      server.off("error", onError);
+      server.off("listening", onListening);
+    };
+    const onError = (error: NodeJS.ErrnoException) => {
+      cleanup();
+      if (error.code === "EPERM" || error.code === "EACCES") {
+        resolve(null);
+        return;
+      }
+      reject(error);
+    };
+    const onListening = () => {
+      cleanup();
+      resolve((server.address() as AddressInfo).port);
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(0, "127.0.0.1");
+  });
+}
+
 describe("session storage setup", () => {
   test("ensureSessionStorage creates the sessions directory", async () => {
     await rm(sessionModule.getSessionsDir(), { recursive: true, force: true });
@@ -184,8 +208,10 @@ describe("session lifecycle", () => {
 
   test("keeps running browser sessions when Chrome runtime is reachable", async () => {
     const server = createServer();
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const port = (server.address() as AddressInfo).port;
+    const port = await listenOnLoopback(server);
+    if (port == null) {
+      return;
+    }
     const meta = await sessionModule.initializeSession(
       { prompt: "Browser live", model: "gpt-5.2-pro", mode: "browser" },
       "/tmp/cwd",

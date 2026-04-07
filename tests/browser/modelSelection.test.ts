@@ -70,4 +70,22 @@ describe("browser model selection matchers", () => {
     expect(expression).toContain("key: 'Escape'");
     expect(expression).toContain("closeMenu();");
   });
+
+  it("falls back to global model option nodes when menu containers are absent", () => {
+    const expression = buildModelSelectionExpressionForTest("Extended Pro");
+    expect(expression).toContain("const getButton = () => document.querySelector(BUTTON_SELECTOR)");
+    expect(expression).toContain("const getComposerFooterLabel = () =>");
+    expect(expression).toContain('[data-testid="composer-footer-actions"]');
+    expect(expression).toContain("const FALLBACK_OPTION_SELECTOR");
+    expect(expression).toContain(
+      '[data-testid^=\\"model-switcher-\\"]:not([data-testid=\\"model-switcher-dropdown-button\\"])',
+    );
+    expect(expression).toContain("document.querySelectorAll('[data-testid]')");
+    expect(expression).toContain("document.querySelectorAll(FALLBACK_OPTION_SELECTOR)");
+    expect(expression).toContain("hasVisibleFallbackOptions");
+    expect(expression).toContain("currentButton?.getAttribute('aria-expanded') === 'true'");
+    expect(expression).toContain(
+      "(currentButton?.getAttribute('data-state') ?? '').toLowerCase() === 'open'",
+    );
+  });
 });

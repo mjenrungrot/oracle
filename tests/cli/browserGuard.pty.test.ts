@@ -4,7 +4,6 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-const TSX_BIN = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
 const CLI_ENTRY = path.join(process.cwd(), "bin", "oracle-cli.ts");
 
 let ptyAvailable = process.platform !== "linux";
@@ -49,11 +48,15 @@ async function runCliPty(
     // Force color so we cover rich-TTY output path.
     // biome-ignore lint/style/useNamingConvention: env keys intentionally uppercase
     FORCE_COLOR: "1",
+    // Avoid FORCE_COLOR/NO_COLOR warnings when running under test.
+    // biome-ignore lint/style/useNamingConvention: env keys intentionally uppercase
+    NO_COLOR: undefined,
   } satisfies Record<string, string | undefined>;
 
-  const ps = pty.spawn(process.execPath, [TSX_BIN, CLI_ENTRY, ...args], {
+  const ps = pty.spawn(process.execPath, ["--import", "tsx", CLI_ENTRY, ...args], {
     cols: 120,
     rows: 30,
+    cwd: process.cwd(),
     env,
   });
 

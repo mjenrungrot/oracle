@@ -190,9 +190,7 @@ describe("resolveApiModel", () => {
   test("rejects deprecated non-ChatGPT providers and models", () => {
     expect(() => resolveApiModel("gpt-5.1-codex")).toThrow(/Only ChatGPT\/GPT browser models/);
     expect(() => resolveApiModel("gemini-3-pro")).toThrow(/Only ChatGPT\/GPT browser models/);
-    expect(() => resolveApiModel("claude-4.5-sonnet")).toThrow(
-      /Only ChatGPT\/GPT browser models/,
-    );
+    expect(() => resolveApiModel("claude-4.5-sonnet")).toThrow(/Only ChatGPT\/GPT browser models/);
     expect(() => resolveApiModel("grok-4.1")).toThrow(/Only ChatGPT\/GPT browser models/);
     expect(() => resolveApiModel("openai/gpt-5.4")).toThrow(/Only ChatGPT\/GPT browser models/);
   });
@@ -227,22 +225,19 @@ describe("inferModelFromLabel", () => {
 
   test("falls back to pro when the label references pro", () => {
     expect(inferModelFromLabel("ChatGPT Pro")).toBe("gpt-5.4-pro");
+    expect(inferModelFromLabel("Extended Pro")).toBe("gpt-5.4-pro");
     expect(inferModelFromLabel("GPT-5.2 Pro")).toBe("gpt-5.2-pro");
     expect(inferModelFromLabel("GPT-5 Pro (Classic)")).toBe("gpt-5-pro");
   });
 
   test("rejects deprecated non-ChatGPT providers and models", () => {
     expect(() => inferModelFromLabel("ChatGPT Codex")).toThrow(/Only ChatGPT\/GPT browser models/);
-    expect(() => inferModelFromLabel("Gemini 3.1 Pro")).toThrow(
-      /Only ChatGPT\/GPT browser models/,
-    );
+    expect(() => inferModelFromLabel("Gemini 3.1 Pro")).toThrow(/Only ChatGPT\/GPT browser models/);
     expect(() => inferModelFromLabel("Claude Sonnet 4.5")).toThrow(
       /Only ChatGPT\/GPT browser models/,
     );
     expect(() => inferModelFromLabel("Grok 4.1")).toThrow(/Only ChatGPT\/GPT browser models/);
-    expect(() => inferModelFromLabel("openai/gpt-5.4")).toThrow(
-      /Only ChatGPT\/GPT browser models/,
-    );
+    expect(() => inferModelFromLabel("openai/gpt-5.4")).toThrow(/Only ChatGPT\/GPT browser models/);
   });
 
   test("falls back to gpt-5.4-pro when label empty and to gpt-5.2 for other ambiguous strings", () => {

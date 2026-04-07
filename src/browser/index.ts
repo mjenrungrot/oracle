@@ -435,7 +435,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await emitRuntimeHint();
       }
     };
-    let conversationHintInFlight: Promise<boolean> | null = null;
     const updateConversationHint = async (label: string, timeoutMs = 10_000): Promise<boolean> => {
       if (!chrome?.port) {
         return false;
@@ -459,17 +458,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await delay(250);
       }
       return false;
-    };
-    const scheduleConversationHint = (label: string, timeoutMs?: number): void => {
-      // Learned: the /c/ URL can update after the answer; emit hints in the background.
-      // Run in the background so prompt submission/streaming isn't blocked by slow URL updates.
-      // No guard: the post-response call should always run to update lastUrl for reattach
-      // metadata, even if the post-submit call already captured the conversation ID.
-      conversationHintInFlight = updateConversationHint(label, timeoutMs)
-        .catch(() => false)
-        .finally(() => {
-          conversationHintInFlight = null;
-        });
     };
     await captureRuntimeSnapshot();
     const modelStrategy = config.modelStrategy ?? DEFAULT_MODEL_STRATEGY;

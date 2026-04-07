@@ -73,10 +73,17 @@ function buildModelSelectionExpression(
   const strategyLiteral = JSON.stringify(strategy);
   const menuContainerLiteral = JSON.stringify(MENU_CONTAINER_SELECTOR);
   const menuItemLiteral = JSON.stringify(MENU_ITEM_SELECTOR);
+  const fallbackOptionLiteral = JSON.stringify(
+    '[role="menuitem"], [role="menuitemradio"], ' +
+      '[data-testid^="model-switcher-"]:not([data-testid="model-switcher-dropdown-button"])',
+  );
   return `(() => {
     ${buildClickDispatcher()}
     // Capture the selectors and matcher literals up front so the browser expression stays pure.
     const BUTTON_SELECTOR = '${MODEL_BUTTON_SELECTOR}';
+    const MENU_CONTAINER_SELECTOR = ${menuContainerLiteral};
+    const MENU_ITEM_SELECTOR = ${menuItemLiteral};
+    const FALLBACK_OPTION_SELECTOR = ${fallbackOptionLiteral};
     const LABEL_TOKENS = ${labelLiteral};
     const TEST_IDS = ${idLiteral};
     const PRIMARY_LABEL = ${primaryLabelLiteral};
@@ -113,14 +120,28 @@ function buildModelSelectionExpression(
     const wantsInstant = normalizedTarget.includes('instant');
     const wantsThinking = normalizedTarget.includes('thinking');
 
-    const button = document.querySelector(BUTTON_SELECTOR);
-    if (!button) {
+    const getButton = () => document.querySelector(BUTTON_SELECTOR);
+    if (!getButton()) {
       return { status: 'button-missing' };
     }
 
+    let lastPointerClick = 0;
+    const activateElement = (node) => {
+      if (!node || !(node instanceof EventTarget)) {
+        return false;
+      }
+      if (node instanceof HTMLElement) {
+        try {
+          node.focus({ preventScroll: true });
+        } catch {}
+      }
+      return dispatchClickSequence(node);
+    };
+
     const closeMenu = () => {
       try {
-        if (dispatchClickSequence(button)) {
+        const currentButton = getButton();
+        if (currentButton && activateElement(currentButton)) {
           lastPointerClick = performance.now();
           return;
         }
@@ -138,12 +159,11 @@ function buildModelSelectionExpression(
       } catch {}
     };
 
-    const getButtonLabel = () => (button.textContent ?? '').trim();
-    if (MODEL_STRATEGY === 'current') {
-      return { status: 'already-selected', label: getButtonLabel() };
-    }
-    const buttonMatchesTarget = () => {
-      const normalizedLabel = normalizeText(getButtonLabel());
+    const getButtonLabel = () => ((getButton()?.textContent ?? '')).trim();
+    const getComposerFooterLabel = () =>
+      ((document.querySelector('[data-testid="composer-footer-actions"]')?.textContent ?? '')).trim();
+    const labelMatchesTarget = (label) => {
+      const normalizedLabel = normalizeText(label);
       if (!normalizedLabel) return false;
       if (desiredVersion) {
         if (desiredVersion === '5-4' && !normalizedLabel.includes('5 4')) return false;
@@ -154,20 +174,30 @@ function buildModelSelectionExpression(
       if (wantsPro && !normalizedLabel.includes(' pro')) return false;
       if (wantsInstant && !normalizedLabel.includes('instant')) return false;
       if (wantsThinking && !normalizedLabel.includes('thinking')) return false;
-      // Also reject if button has variants we DON'T want
+      // Also reject if the visible label has variants we don't want.
       if (!wantsPro && normalizedLabel.includes(' pro')) return false;
       if (!wantsInstant && normalizedLabel.includes('instant')) return false;
       if (!wantsThinking && normalizedLabel.includes('thinking')) return false;
       return true;
     };
+    const getActiveModelLabel = () => {
+      const candidates = [getComposerFooterLabel(), getButtonLabel()].filter(Boolean);
+      return candidates.find((label) => labelMatchesTarget(label)) ?? null;
+    };
+    if (MODEL_STRATEGY === 'current') {
+      return { status: 'already-selected', label: getActiveModelLabel() ?? getButtonLabel() };
+    }
+    const buttonMatchesTarget = () => {
+      return Boolean(getActiveModelLabel());
+    };
 
     if (buttonMatchesTarget()) {
-      return { status: 'already-selected', label: getButtonLabel() };
+      return { status: 'already-selected', label: getActiveModelLabel() ?? getButtonLabel() };
     }
 
-    let lastPointerClick = 0;
     const pointerClick = () => {
-      if (dispatchClickSequence(button)) {
+      const currentButton = getButton();
+      if (currentButton && activateElement(currentButton)) {
         lastPointerClick = performance.now();
       }
     };
@@ -308,24 +338,55 @@ function buildModelSelectionExpression(
       return Math.max(score, 0);
     };
 
+    const hasVisibleFallbackOptions = () =>
+      Array.from(document.querySelectorAll(FALLBACK_OPTION_SELECTOR)).some((node) => {
+        if (!(node instanceof HTMLElement)) {
+          return true;
+        }
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+
+    const collectOptionNodes = () => {
+      const menuRoots = Array.from(document.querySelectorAll(MENU_CONTAINER_SELECTOR));
+      if (menuRoots.length > 0) {
+        return menuRoots.flatMap((root) => Array.from(root.querySelectorAll(MENU_ITEM_SELECTOR)));
+      }
+      return Array.from(document.querySelectorAll(FALLBACK_OPTION_SELECTOR));
+    };
+
     const findBestOption = () => {
+      const directMatch = TEST_IDS
+        .map((id) => {
+          if (!id) return null;
+          return Array.from(document.querySelectorAll('[data-testid]')).find(
+            (node) => node.getAttribute('data-testid') === id,
+          );
+        })
+        .find(Boolean);
+      if (directMatch) {
+        return {
+          node: directMatch,
+          label: getOptionLabel(directMatch),
+          score: 10_000,
+          testid: directMatch.getAttribute('data-testid') ?? '',
+          normalizedText: normalizeText(directMatch.textContent ?? ''),
+        };
+      }
       // Walk through every menu item and keep whichever earns the highest score.
       let bestMatch = null;
-      const menus = Array.from(document.querySelectorAll(${menuContainerLiteral}));
-      for (const menu of menus) {
-        const buttons = Array.from(menu.querySelectorAll(${menuItemLiteral}));
-        for (const option of buttons) {
-          const text = option.textContent ?? '';
-          const normalizedText = normalizeText(text);
-          const testid = option.getAttribute('data-testid') ?? '';
-          const score = scoreOption(normalizedText, testid);
-          if (score <= 0) {
-            continue;
-          }
-          const label = getOptionLabel(option);
-          if (!bestMatch || score > bestMatch.score) {
-            bestMatch = { node: option, label, score, testid, normalizedText };
-          }
+      const optionNodes = collectOptionNodes();
+      for (const option of optionNodes) {
+        const text = option.textContent ?? '';
+        const normalizedText = normalizeText(text);
+        const testid = option.getAttribute('data-testid') ?? '';
+        const score = scoreOption(normalizedText, testid);
+        if (score <= 0) {
+          continue;
+        }
+        const label = getOptionLabel(option);
+        if (!bestMatch || score > bestMatch.score) {
+          bestMatch = { node: option, label, score, testid, normalizedText };
         }
       }
       return bestMatch;
@@ -345,10 +406,7 @@ function buildModelSelectionExpression(
         return body.includes('temporary chat');
       };
       const collectAvailableOptions = () => {
-        const menuRoots = Array.from(document.querySelectorAll(${menuContainerLiteral}));
-        const nodes = menuRoots.length > 0
-          ? menuRoots.flatMap((root) => Array.from(root.querySelectorAll(${menuItemLiteral})))
-          : Array.from(document.querySelectorAll(${menuItemLiteral}));
+        const nodes = collectOptionNodes();
         const labels = nodes
           .map((node) => (node?.textContent ?? '').trim())
           .filter(Boolean)
@@ -357,7 +415,16 @@ function buildModelSelectionExpression(
       };
       const ensureMenuOpen = () => {
         const menuOpen = document.querySelector('[role="menu"], [data-radix-collection-root]');
-        if (!menuOpen && performance.now() - lastPointerClick > REOPEN_INTERVAL_MS) {
+        const currentButton = getButton();
+        const buttonExpanded =
+          currentButton?.getAttribute('aria-expanded') === 'true' ||
+          (currentButton?.getAttribute('data-state') ?? '').toLowerCase() === 'open';
+        if (
+          !menuOpen &&
+          !buttonExpanded &&
+          !hasVisibleFallbackOptions() &&
+          performance.now() - lastPointerClick > REOPEN_INTERVAL_MS
+        ) {
           pointerClick();
         }
       };
@@ -379,7 +446,7 @@ function buildModelSelectionExpression(
             resolve({ status: 'already-selected', label: getButtonLabel() || match.label });
             return;
           }
-          dispatchClickSequence(match.node);
+          activateElement(match.node);
           // Submenus (e.g. "Legacy models") need a second pass to pick the actual model option.
           // Keep scanning once the submenu opens instead of treating the submenu click as a final switch.
           const isSubmenu = (match.testid ?? '').toLowerCase().includes('submenu');
@@ -389,9 +456,10 @@ function buildModelSelectionExpression(
           }
           // Wait for the top bar label to reflect the requested model; otherwise keep scanning.
           setTimeout(() => {
-            if (buttonMatchesTarget()) {
+            const activeLabel = getActiveModelLabel();
+            if (activeLabel) {
               closeMenu();
-              resolve({ status: 'switched', label: getButtonLabel() || match.label });
+              resolve({ status: 'switched', label: activeLabel || match.label });
               return;
             }
             attempt();
@@ -519,6 +587,14 @@ function buildModelMatchersLiteral(targetModel: string): {
     push("proresearch", labelTokens);
     push("research grade", labelTokens);
     push("advanced reasoning", labelTokens);
+    if (base.includes("extended")) {
+      push("extended pro", labelTokens);
+      push("research grade intelligence", labelTokens);
+      testIdTokens.add("model-switcher-gpt-5-4-pro");
+      testIdTokens.add("gpt-5.4-pro");
+      testIdTokens.add("gpt-5-4-pro");
+      testIdTokens.add("gpt54pro");
+    }
     if (base.includes("5.4") || base.includes("5-4") || base.includes("54")) {
       testIdTokens.add("gpt-5.4-pro");
       testIdTokens.add("gpt-5-4-pro");
