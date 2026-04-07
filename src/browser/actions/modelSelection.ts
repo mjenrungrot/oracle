@@ -438,6 +438,12 @@ function buildModelSelectionExpression(
           initialized = true;
           await openDelay();
         }
+        const activeLabel = getActiveModelLabel();
+        if (activeLabel) {
+          closeMenu();
+          resolve({ status: 'already-selected', label: activeLabel });
+          return;
+        }
         ensureMenuOpen();
         const match = findBestOption();
         if (match) {
@@ -467,6 +473,12 @@ function buildModelSelectionExpression(
           return;
         }
         if (performance.now() - start > MAX_WAIT_MS) {
+          const settledLabel = getActiveModelLabel();
+          if (settledLabel) {
+            closeMenu();
+            resolve({ status: 'already-selected', label: settledLabel });
+            return;
+          }
           resolve({
             status: 'option-not-found',
             hint: { temporaryChat: detectTemporaryChat(), availableOptions: collectAvailableOptions() },

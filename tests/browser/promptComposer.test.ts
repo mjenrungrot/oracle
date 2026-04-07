@@ -1,8 +1,118 @@
 import { describe, expect, test, vi } from "vitest";
-import { __test__ as promptComposer } from "../../src/browser/actions/promptComposer.js";
+import {
+  __test__ as promptComposer,
+  fillPromptComposer,
+} from "../../src/browser/actions/promptComposer.js";
 import { BrowserAutomationError } from "../../src/oracle/errors.js";
 
 describe("promptComposer", () => {
+  test("overwrites restored draft text with the requested prompt", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi
+          .fn()
+          .mockResolvedValueOnce({
+            result: { value: { ready: true, composer: true, fileInput: false } },
+          })
+          .mockResolvedValueOnce({ result: { value: { focused: true } } })
+          .mockResolvedValueOnce({
+            result: {
+              value: {
+                editorText: "restored draft",
+                fallbackValue: "",
+                activeValue: "restored draft",
+              },
+            },
+          })
+          .mockResolvedValueOnce({ result: { value: undefined } })
+          .mockResolvedValueOnce({
+            result: {
+              value: {
+                editorText: "target prompt",
+                fallbackValue: "",
+                activeValue: "target prompt",
+              },
+            },
+          }),
+      } as unknown as {
+        evaluate: (args: { expression: string; returnByValue?: boolean }) => Promise<unknown>;
+      };
+      const input = {
+        insertText: vi.fn().mockResolvedValue(undefined),
+      } as unknown as {
+        insertText: (args: { text: string }) => Promise<void>;
+      };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const promise = fillPromptComposer(
+        { runtime: runtime as never, input: input as never },
+        "target prompt",
+        logger as never,
+      );
+      await vi.runAllTimersAsync();
+      await expect(promise).resolves.toBeUndefined();
+      expect(input.insertText).toHaveBeenCalledWith({ text: "target prompt" });
+      expect(runtime.evaluate).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("throws when the requested prompt still does not match after overwrite fallback", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi
+          .fn()
+          .mockResolvedValueOnce({
+            result: { value: { ready: true, composer: true, fileInput: false } },
+          })
+          .mockResolvedValueOnce({ result: { value: { focused: true } } })
+          .mockResolvedValueOnce({
+            result: {
+              value: {
+                editorText: "restored draft",
+                fallbackValue: "",
+                activeValue: "restored draft",
+              },
+            },
+          })
+          .mockResolvedValueOnce({ result: { value: undefined } })
+          .mockResolvedValueOnce({
+            result: {
+              value: {
+                editorText: "restored draft plus target prompt",
+                fallbackValue: "",
+                activeValue: "restored draft plus target prompt",
+              },
+            },
+          }),
+      } as unknown as {
+        evaluate: (args: { expression: string; returnByValue?: boolean }) => Promise<unknown>;
+      };
+      const input = {
+        insertText: vi.fn().mockResolvedValue(undefined),
+      } as unknown as {
+        insertText: (args: { text: string }) => Promise<void>;
+      };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const promise = fillPromptComposer(
+        { runtime: runtime as never, input: input as never },
+        "target prompt",
+        logger as never,
+      );
+      const assertion = expect(promise).rejects.toMatchObject({
+        details: expect.objectContaining({ code: "prompt-mismatch" }),
+      });
+      await vi.runAllTimersAsync();
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("attachment sends throw instead of falling back to Enter when composer never becomes send-ready", async () => {
     vi.useFakeTimers();
     try {

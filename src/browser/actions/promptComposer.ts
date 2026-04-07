@@ -35,6 +35,25 @@ interface PromptComposerDeps {
   inputTimeoutMs?: number | null;
 }
 
+function normalizeComposerValue(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/\u200b/g, "")
+    .trim();
+}
+
+function promptLandedExactly(
+  prompt: string,
+  observedValues: Array<string | null | undefined>,
+): boolean {
+  const normalizedPrompt = normalizeComposerValue(prompt);
+  if (!normalizedPrompt) {
+    return false;
+  }
+  return observedValues.some((value) => normalizeComposerValue(value) === normalizedPrompt);
+}
+
 export async function fillPromptComposer(
   deps: PromptComposerDeps,
   prompt: string,
@@ -113,7 +132,7 @@ export async function fillPromptComposer(
       const readValue = (node) => {
         if (!node) return '';
         if (node instanceof HTMLTextAreaElement) return node.value ?? '';
-        return node.innerText ?? '';
+        return node.textContent ?? node.innerText ?? '';
       };
       const isVisible = (node) => {
         if (!node || typeof node.getBoundingClientRect !== 'function') return false;
@@ -125,7 +144,7 @@ export async function fillPromptComposer(
         .filter((node) => Boolean(node));
       const active = candidates.find((node) => isVisible(node)) || candidates[0] || null;
       return {
-        editorText: editor?.innerText ?? '',
+        editorText: editor ? readValue(editor) : '',
         fallbackValue: fallback?.value ?? '',
         activeValue: active ? readValue(active) : '',
       };
@@ -136,24 +155,35 @@ export async function fillPromptComposer(
   const editorTextRaw = verification.result?.value?.editorText ?? "";
   const fallbackValueRaw = verification.result?.value?.fallbackValue ?? "";
   const activeValueRaw = verification.result?.value?.activeValue ?? "";
-  const editorTextTrimmed = editorTextRaw?.trim?.() ?? "";
-  const fallbackValueTrimmed = fallbackValueRaw?.trim?.() ?? "";
-  const activeValueTrimmed = activeValueRaw?.trim?.() ?? "";
-  if (!editorTextTrimmed && !fallbackValueTrimmed && !activeValueTrimmed) {
-    // Learned: occasionally Input.insertText doesn't land in the editor; force textContent/value + input events.
+  if (!promptLandedExactly(prompt, [editorTextRaw, fallbackValueRaw, activeValueRaw])) {
+    // Learned: Input.insertText can miss or append into a restored draft; force an exact overwrite.
     await runtime.evaluate({
       expression: `(() => {
         const fallback = document.querySelector(${fallbackSelectorLiteral});
+        const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+        const clearAndWrite = (node) => {
+          if (!node) return;
+          if (node instanceof HTMLTextAreaElement) {
+            node.value = ${encodedPrompt};
+            node.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
+            node.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+          }
+          node.textContent = ${encodedPrompt};
+          node.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
+        };
         if (fallback) {
-          fallback.value = ${encodedPrompt};
-          fallback.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
-          fallback.dispatchEvent(new Event('change', { bubbles: true }));
+          clearAndWrite(fallback);
         }
         const editor = document.querySelector(${primarySelectorLiteral});
         if (editor) {
-          editor.textContent = ${encodedPrompt};
-          // Nudge ProseMirror to register the textContent write so its state/send-button updates
-          editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
+          clearAndWrite(editor);
+        }
+        const nodes = inputSelectors
+          .map((selector) => document.querySelector(selector))
+          .filter((node) => Boolean(node));
+        for (const node of nodes) {
+          clearAndWrite(node);
         }
       })()`,
     });
@@ -168,7 +198,7 @@ export async function fillPromptComposer(
       const readValue = (node) => {
         if (!node) return '';
         if (node instanceof HTMLTextAreaElement) return node.value ?? '';
-        return node.innerText ?? '';
+        return node.textContent ?? node.innerText ?? '';
       };
       const isVisible = (node) => {
         if (!node || typeof node.getBoundingClientRect !== 'function') return false;
@@ -180,7 +210,7 @@ export async function fillPromptComposer(
         .filter((node) => Boolean(node));
       const active = candidates.find((node) => isVisible(node)) || candidates[0] || null;
       return {
-        editorText: editor?.innerText ?? '',
+        editorText: editor ? readValue(editor) : '',
         fallbackValue: fallback?.value ?? '',
         activeValue: active ? readValue(active) : '',
       };
@@ -208,6 +238,15 @@ export async function fillPromptComposer(
       },
     );
   }
+  if (!promptLandedExactly(prompt, [observedEditor, observedFallback, observedActive])) {
+    await logDomFailure(runtime, logger, "prompt-mismatch");
+    throw new BrowserAutomationError("Prompt did not land in the composer exactly.", {
+      stage: "submit-prompt",
+      code: "prompt-mismatch",
+      promptLength,
+      observedLength,
+    });
+  }
 }
 
 export async function sendPreparedPrompt(
@@ -216,7 +255,12 @@ export async function sendPreparedPrompt(
   logger: BrowserLogger,
 ): Promise<number | null> {
   const { runtime, input } = deps;
-  const clicked = await attemptSendButton(runtime, logger, deps?.attachmentNames, deps?.inputTimeoutMs ?? undefined);
+  const clicked = await attemptSendButton(
+    runtime,
+    logger,
+    deps?.attachmentNames,
+    deps?.inputTimeoutMs ?? undefined,
+  );
   if (!clicked) {
     await input.dispatchKeyEvent({
       type: "keyDown",
@@ -376,7 +420,9 @@ async function attemptSendButton(
         const now = Date.now();
         if (now - lastLogTime > 3000) {
           lastLogTime = now;
-          logger(`Attachment send readiness: ${summarizeComposerSendReadiness(state, attachmentNames)}`);
+          logger(
+            `Attachment send readiness: ${summarizeComposerSendReadiness(state, attachmentNames)}`,
+          );
         }
       }
     } else {
@@ -391,10 +437,10 @@ async function attemptSendButton(
   }
 
   if (hasAttachments) {
-    throw new BrowserAutomationError(
-      "Composer never became send-ready for attachment send",
-      { stage: "submit-prompt", code: "attachment-send-not-ready" },
-    );
+    throw new BrowserAutomationError("Composer never became send-ready for attachment send", {
+      stage: "submit-prompt",
+      code: "attachment-send-not-ready",
+    });
   }
   return false;
 }

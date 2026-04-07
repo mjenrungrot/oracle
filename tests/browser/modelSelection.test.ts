@@ -88,4 +88,12 @@ describe("browser model selection matchers", () => {
       "(currentButton?.getAttribute('data-state') ?? '').toLowerCase() === 'open'",
     );
   });
+
+  it("re-checks the active model while waiting for the home-surface picker to settle", () => {
+    const expression = buildModelSelectionExpressionForTest("Extended Pro");
+    expect(expression).toContain("const activeLabel = getActiveModelLabel();");
+    expect(expression).toContain("resolve({ status: 'already-selected', label: activeLabel });");
+    expect(expression).toContain("const settledLabel = getActiveModelLabel();");
+    expect(expression).toContain("resolve({ status: 'already-selected', label: settledLabel });");
+  });
 });
